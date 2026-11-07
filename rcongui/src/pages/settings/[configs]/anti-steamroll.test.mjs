@@ -106,7 +106,7 @@ async function configPage({ get, execute }) {
 
 test("Anti-Steamroll route loads its configuration and visual schema", async () => {
   const calls = [];
-  const config = { enabled: true, caps_threshold: 4 };
+  const config = { enabled: true, immune_roles: ["sniper"] };
   const schema = {
     type: "object",
     properties: { enabled: { type: "boolean" } },
@@ -128,6 +128,7 @@ test("Anti-Steamroll route loads its configuration and visual schema", async () 
   assert.deepEqual(data.data, config);
   assert.deepEqual(data.schema, schema);
   assert.match(data.note, /entire final sector/);
+  assert.match(data.note, /immune_roles/);
   assert.deepEqual(calls, [
     "get_auto_mod_antisteamroll_config",
     "describe_auto_mod_antisteamroll_config",
@@ -163,12 +164,15 @@ test("Anti-Steamroll form does not save rejected configuration", async () => {
   const page = await configPage({
     execute: async (command) => {
       calls.push(command);
-      return Response.json({ failed: false, error: "Invalid cap threshold" });
+      return Response.json({
+        failed: false,
+        error: "Roles are not valid for hll: notarole",
+      });
     },
   });
   const form = new FormData();
   form.set("name", "auto_mod_antisteamroll_config");
-  form.set("config", JSON.stringify({ caps_threshold: 5 }));
+  form.set("config", JSON.stringify({ immune_roles: ["notarole"] }));
   const result = await page.action({ request: { formData: async () => form } });
   assert.equal(result.ok, false);
   assert.deepEqual(calls, ["validate_auto_mod_antisteamroll_config"]);

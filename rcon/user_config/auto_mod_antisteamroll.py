@@ -1,25 +1,43 @@
 from string import Formatter
 
-from pydantic import Field, HttpUrl, field_serializer, field_validator
-
-from rcon.user_config.utils import BaseUserConfig, key_check, set_user_config
-
-MESSAGE_PLACEHOLDERS = frozenset(
-    {
-        "player_name",
-        "team",
-        "remaining_minutes",
-        "attack_allowed_minutes",
-        "received_warnings",
-        "max_warnings",
-        "received_punishes",
-        "max_punishes",
-    }
+from pydantic import (
+    Field,
+    HttpUrl,
+    ValidationInfo,
+    field_serializer,
+    field_validator,
 )
+
+from rcon.user_config.utils import (
+    BaseUserConfig,
+    key_check,
+    set_user_config,
+    validate_game_roles,
+)
+
+ANNOUNCEMENT_PLACEHOLDERS = frozenset({"remaining_minutes", "attack_allowed_minutes"})
+SANCTION_PLACEHOLDERS = ANNOUNCEMENT_PLACEHOLDERS | {
+    "player_name",
+    "team",
+    "received_warnings",
+    "max_warnings",
+    "received_punishes",
+    "max_punishes",
+}
+# Recon squads (sniper + its spotter) and tank crews legitimately operate deep
+# behind enemy lines.
+DEFAULT_IMMUNE_ROLES = ["spotter", "sniper", "tankcommander", "crewman"]
+
+
+def _validate_placeholders(value: str, allowed: frozenset[str]) -> str:
+    for _, name, spec, conversion in Formatter().parse(value):
+        if name is not None and (name not in allowed or spec or conversion):
+            raise ValueError("Unsupported message placeholder or format")
+    return value
 
 
 class AutoModAntiSteamrollUserConfig(BaseUserConfig):
-    """Live settings for protecting the losing team's final Warfare sector."""
+    """Protects the losing team's last Warfare sector while the score is 4-1."""
 
     # This docstring is published in the JSON schema shown by the settings UI.
     # Unknown keys are ignored when loading (pydantic default), so a stored config
@@ -33,49 +51,45 @@ class AutoModAntiSteamrollUserConfig(BaseUserConfig):
     dry_run: bool = Field(
         default=False,
         title="Dry-Run",
-        description="Record proposed actions in audit logs without messaging or sanctioning players.",
+        description="Log and audit what would happen without messaging or sanctioning players.",
     )
     discord_webhook_url: HttpUrl | None = Field(
-        default=None, title="Discord Webhook URL"
-    )
-    caps_threshold: int = Field(
-        default=4,
-        ge=3,
-        le=4,
-        title="Caps Threshold",
-        description="Protect the final enemy capture sector when the leading team owns at least this many caps. Warfare only.",
+        default=None,
+        title="Discord Webhook URL",
+        description="Optional: posts protection announcements and every warning, punish and kick to this Discord channel.",
     )
     allow_final_attack_remaining_minutes: int = Field(
-        default=30,
+        default=45,
         ge=0,
-        title="Allow Attack: Remaining Minutes",
-        description="Release protection when remaining match time is at or below this value.",
+        title="Allow Final Attack: Remaining Minutes",
+        description="The last point is protected until the remaining match time reaches this value.",
     )
-    protection_duration_minutes: int = Field(
+    min_players: int = Field(
         default=0,
         ge=0,
-        title="Maximum Protection Duration (Minutes)",
-        description="Release after this many minutes of continuous dominance; zero protects until the remaining-time threshold. Score changes reset the duration.",
+        le=100,
+        title="Minimum Players",
+        description="No protection below this number of connected players.",
     )
-    min_players: int = Field(default=0, ge=0, le=100, title="Minimum Players")
-    boundary_margin_units: float = Field(
-        default=1000,
-        ge=0,
-        le=10000,
-        title="Boundary Margin (World Units)",
-        description="Inset on all edges of the final capture sector to avoid border false positives. Standard grid cells are 20000 world units wide.",
+    immune_roles: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_IMMUNE_ROLES),
+        title="Immune Roles",
+        description="Players in these roles are never checked by Anti-Steamroll.",
     )
-    entry_grace_seconds: int = Field(
-        default=10,
-        ge=5,
-        title="Confirmed Presence (Seconds)",
-        description="Continuous observed presence required before warnings or sanctions; checks run approximately every five seconds.",
+    winning_team_message: str = Field(
+        default="Anti-Steamroll: the enemy's last point is protected until {attack_allowed_minutes} minutes remain. Do not enter their last sector, and please balance the teams if needed.",
+        title="Winning Team Message",
+        description="Sent once to the team holding 4 points when protection starts. Leave empty to disable.",
     )
-    violation_reset_seconds: int = Field(
-        default=120,
-        ge=15,
-        title="Escalation Reset (Seconds)",
-        description="Forget prior warnings and punishments after this long outside the protected interior. Re-entry always requires a new presence confirmation.",
+    losing_team_message: str = Field(
+        default="Anti-Steamroll: your last point is protected until {attack_allowed_minutes} minutes remain. Regroup, build garrisons behind your lines and push back.",
+        title="Losing Team Message",
+        description="Sent once to the team holding 1 point when protection starts. Leave empty to disable.",
+    )
+    protection_lifted_message: str = Field(
+        default="Anti-Steamroll: {attack_allowed_minutes} minutes remain, the last point can now be attacked.",
+        title="Protection Lifted Message",
+        description="Sent once to all players when the remaining time is reached during a protection. Leave empty to disable.",
     )
     number_of_warnings: int = Field(
         default=2,
@@ -116,15 +130,22 @@ class AutoModAntiSteamrollUserConfig(BaseUserConfig):
     def serialize_webhook(self, value: HttpUrl | None):
         return str(value) if value is not None else None
 
+    @field_validator("immune_roles")
+    @classmethod
+    def validate_roles(cls, values, info: ValidationInfo):
+        return validate_game_roles(values, info)
+
     @field_validator("warning_message", "punish_message", "kick_message")
     @classmethod
-    def validate_message(cls, value: str) -> str:
-        for _, name, spec, conversion in Formatter().parse(value):
-            if name is not None and (
-                name not in MESSAGE_PLACEHOLDERS or spec or conversion
-            ):
-                raise ValueError("Unsupported message placeholder or format")
-        return value
+    def validate_sanction_message(cls, value: str) -> str:
+        return _validate_placeholders(value, SANCTION_PLACEHOLDERS)
+
+    @field_validator(
+        "winning_team_message", "losing_team_message", "protection_lifted_message"
+    )
+    @classmethod
+    def validate_announcement(cls, value: str) -> str:
+        return _validate_placeholders(value, ANNOUNCEMENT_PLACEHOLDERS)
 
     @staticmethod
     def save_to_db(values: dict, dry_run=False):

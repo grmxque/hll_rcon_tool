@@ -8,8 +8,7 @@ cycle. The Automod service must be running. Defaults leave the feature disabled.
 
 ## Protected area
 
-When one team owns at least the configured cap threshold (default: four of five),
-its players must stay out of the losing team's final capture sector. This is the
+While the score is 4-1, the winning team's players must stay out of the losing team's final capture sector. This is the
 **whole final sector containing the three possible objective capture zones**,
 not just the active strongpoint circle. Reconnaissance inside that sector also
 violates the rule. No server setting locks captures: enforcement uses the existing
@@ -30,10 +29,11 @@ The RCON snapshot has no position age or accuracy guarantee. Missing, non-finite
 and all-zero coordinates are ignored; bleeding-out players may retain coordinates.
 Neither altitude nor movement direction is used to determine sector membership.
 
-The default inset of 1,000 world units excludes the perimeter on every edge.
+An inset of 1,000 world units (about 10 m) excludes the perimeter on every edge.
 The standard grid uses roughly 20,000 world units per cell, with map-specific
 scales supplied by the catalog. Boundary equality is excluded. Ten seconds of
-observed presence are required by default. A gap exceeding 15 seconds restarts
+observed presence are required before any action. These values are constants in
+`rcon/automods/antisteamroll.py`, not settings. A gap exceeding 15 seconds restarts
 confirmation and enforcement state. An incursion between observations may be missed.
 This feature therefore reduces steamrolls, rather than guaranteeing no final capture.
 
@@ -42,14 +42,14 @@ This feature therefore reduces steamrolls, rather than guaranteeing no final cap
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | false | Enable the independent Automod |
-| `dry_run` | false | Audit proposed actions without messaging or sanctioning |
-| `caps_threshold` | 4 | Leading team's cap threshold, from 3 to 4; still protects only the final sector |
-| `allow_final_attack_remaining_minutes` | 30 | Release protection at or below this remaining match time |
-| `protection_duration_minutes` | 0 | Maximum continuous protection from the first eligible observation; zero disables this limit |
+| `dry_run` | false | Log and audit announcements and actions without messaging or sanctioning |
+| `discord_webhook_url` | null | Posts announcements and every warning, punish and kick to this channel |
+| `allow_final_attack_remaining_minutes` | 45 | Protection ends when the remaining match time reaches this value |
 | `min_players` | 0 | Minimum total server population |
-| `boundary_margin_units` | 1000 | Inset on the final sector's edges |
-| `entry_grace_seconds` | 10 | Required observed presence before an action |
-| `violation_reset_seconds` | 120 | Forget escalation after this long outside the protected interior |
+| `immune_roles` | spotter, sniper, tankcommander, crewman | Roles never checked (validated against the server's game) |
+| `winning_team_message` | supplied template | Sent once to the team holding 4 points when protection starts; empty disables |
+| `losing_team_message` | supplied template | Sent once to the team holding 1 point when protection starts; empty disables |
+| `protection_lifted_message` | supplied template | Sent once to all players when the remaining time is reached during a protection; empty disables |
 | `number_of_warnings` | 2 | Warning count; zero skips, -1 repeats indefinitely |
 | `warning_interval_seconds` | 15 | Warning interval and delay before moving beyond warnings |
 | `number_of_punishments` | 2 | Punishment count; zero skips, -1 repeats indefinitely |
@@ -57,9 +57,22 @@ This feature therefore reduces steamrolls, rather than guaranteeing no final cap
 | `kick_after_max_punish` | true | Enable the final kick stage |
 | `kick_grace_period_seconds` | 30 | Minimum delay after the last warning/punish before kicking, also the kick retry interval |
 | `warning_message`, `punish_message`, `kick_message` | supplied templates | Player messages |
-| `discord_webhook_url` | null | Optional existing Automod Discord action audit |
 
-Message variables: `{player_name}`, `{team}`, `{remaining_minutes}`,
+## Announcements
+
+When protection starts (each time the score becomes 4-1 above the remaining-time
+threshold), each team receives its message through pipelined `MessagePlayer`
+commands. When the threshold is then reached while the score is still 4-1, the
+lifted message goes to everyone (`MessageAllPlayers`). A protection is announced
+once: a reset of the enforcement state (configuration change, slow cycle) does
+not repeat it, while a recapture followed by a new 4-1 is announced again. A failed
+send is logged and retried on the next cycle; if one team's message was delivered
+before the failure, that team receives it again. Each announcement is recorded in
+the audit log (`antisteamroll_announcement`) and posted to the Discord webhook.
+
+Announcement variables: `{remaining_minutes}`, `{attack_allowed_minutes}`.
+
+Warning, punish and kick variables: `{player_name}`, `{team}`, `{remaining_minutes}`,
 `{attack_allowed_minutes}`, `{received_warnings}`, `{max_warnings}`,
 `{received_punishes}`, `{max_punishes}`. `remaining_minutes` is the current
 remaining match time (whole minutes); `attack_allowed_minutes` is the configured
@@ -77,9 +90,7 @@ Recent escalation is retained so a player killed by a punish can progress to the
 next stage if they return. Team switches and disconnects clear player history.
 Score, layer, match, timer increase, configuration changes and interrupted sampling
 reset enforcement state. Population falling below the threshold also clears state.
-The maximum protection duration follows the match timer and stays released until
-the context changes. After a service interruption it starts again at the next
-eligible observation; it does not reconstruct historical dominance.
+Players in an immune role are ignored while they hold that role.
 
 ## Integration and deployment
 

@@ -72,7 +72,9 @@ def get_punitions_to_apply(rcon, moderators) -> PunitionsToApply:
     # squad automods keep their behaviour. `merge` keeps a single punish per
     # player: a dropped punish is rolled back so its escalation is not counted.
     for mod in server_moderators:
-        server_punitions = mod.server_punitions_to_apply(team_view, gamestate)
+        server_punitions = mod.server_punitions_to_apply(
+            team_view, gamestate, rcon=rcon
+        )
         for aplayer in server_punitions.punish:
             if any(p.player_id == aplayer.player_id for p in punitions_to_apply.punish):
                 mod.player_punish_failed(aplayer)

@@ -129,25 +129,13 @@ def test_allied_leader_and_commander_are_checked(scenario):
     assert confirmed(scenario).warning[0].squad == "Commander"
 
 
-@pytest.mark.parametrize("minutes", [30, 29, 0])
+@pytest.mark.parametrize("minutes", [45, 44, 0])
 def test_remaining_time_releases_and_cleans_state(scenario, minutes):
     assert confirmed(scenario)
     mod, teams, game, _, _ = scenario
     game["time_remaining"] = timedelta(minutes=minutes)
     assert not mod.server_punitions_to_apply(teams, game)
     assert not mod.red.exists(mod.key)
-
-
-def test_duration_stays_released(scenario):
-    mod, teams, game, clock, _ = scenario
-    mod.config.protection_duration_minutes = 1
-    assert confirmed(scenario)
-    for _ in range(13):
-        clock[0] += 5
-        game["time_remaining"] -= timedelta(seconds=5)
-        result = mod.server_punitions_to_apply(teams, game)
-    assert not result
-    assert json.loads(mod.red.get(mod.key))["players"] == {}
 
 
 def test_score_changes_reset_escalation(scenario):
@@ -309,9 +297,9 @@ def test_punishment_death_and_reentry_preserve_escalation(scenario):
     assert confirmed(scenario).kick
 
 
-def test_escalation_expires_after_compliance(scenario):
+def test_escalation_expires_after_compliance(scenario, monkeypatch):
     mod, teams, game, clock, player = scenario
-    mod.config.violation_reset_seconds = 15
+    monkeypatch.setattr(antisteamroll, "VIOLATION_RESET_SECONDS", 15)
     assert confirmed(scenario).warning
     position = player["world_position"]
     player["world_position"] = {"x": 0, "y": 0, "z": 0}
@@ -324,9 +312,9 @@ def test_escalation_expires_after_compliance(scenario):
     assert result.warning and not result.punish
 
 
-def test_reentry_at_reset_deadline_gets_fresh_escalation(scenario):
+def test_reentry_at_reset_deadline_gets_fresh_escalation(scenario, monkeypatch):
     mod, teams, game, clock, player = scenario
-    mod.config.violation_reset_seconds = 15
+    monkeypatch.setattr(antisteamroll, "VIOLATION_RESET_SECONDS", 15)
     assert confirmed(scenario).warning
     position = player["world_position"]
     player["world_position"] = {"x": 0, "y": 0, "z": 0}
@@ -351,12 +339,6 @@ def test_kicks_can_be_disabled(scenario):
     for _ in range(10):
         clock[0] += 5
         assert not mod.server_punitions_to_apply(teams, game)
-
-
-def test_three_cap_threshold_still_protects_only_final_sector(scenario):
-    scenario[0].config.caps_threshold = 3
-    scenario[2].update(axis_score=3, allied_score=2)
-    assert confirmed(scenario).warning
 
 
 def test_catalog_non_warfare_layer_is_skipped(scenario):
@@ -495,8 +477,10 @@ def test_live_config_api_and_next_cycle(scenario, monkeypatch):
 @pytest.mark.parametrize(
     "values",
     [
-        {"caps_threshold": 5},
-        {"entry_grace_seconds": 0},
+        {"allow_final_attack_remaining_minutes": -1},
+        {"immune_roles": ["notarole"]},
+        {"winning_team_message": "{player_name}"},
+        {"protection_lifted_message": "{"},
         {"min_players": 101},
         {"warning_message": "{unknown}"},
         {"punish_message": "{player_name.__class__}"},
@@ -655,8 +639,8 @@ def test_punish_dropped_for_another_automod_is_rolled_back(scenario):
 def test_message_placeholders_distinguish_remaining_time_and_threshold(scenario):
     mod, _, game, _, _ = scenario
     mod.config.warning_message = "{remaining_minutes}/{attack_allowed_minutes}"
-    game["time_remaining"] = timedelta(minutes=42, seconds=30)
-    assert confirmed(scenario).warning[0].details.message == "42/30"
+    game["time_remaining"] = timedelta(minutes=52, seconds=30)
+    assert confirmed(scenario).warning[0].details.message == "52/45"
 
 
 def test_api_rejects_unknown_keys_but_storage_tolerates_obsolete_ones():
@@ -664,3 +648,152 @@ def test_api_rejects_unknown_keys_but_storage_tolerates_obsolete_ones():
         Config.save_to_db({"enabled": True, "unexpected": True}, dry_run=True)
     stored = Config.model_validate({"enabled": True, "removed_field": 1})
     assert stored.enabled
+
+
+@pytest.mark.parametrize("role", ["sniper", "spotter", "tankcommander", "crewman"])
+def test_default_immune_roles_are_never_checked(scenario, role):
+    scenario[4]["role"] = role
+    assert not confirmed(scenario)
+
+
+def test_immune_roles_are_configurable(scenario):
+    mod, _, _, _, player = scenario
+    player["role"] = "sniper"
+    mod.config.immune_roles = ["medic"]
+    assert confirmed(scenario).warning
+
+
+def test_immune_roles_are_validated_for_the_selected_game():
+    vietnam = {"game": GameEnum.HLL_VIETNAM}
+    assert Config.model_validate(
+        {"immune_roles": ["helicopterpilot"]}, context=vietnam
+    ).immune_roles == ["helicopterpilot"]
+    with pytest.raises(ValidationError):
+        Config.model_validate({"immune_roles": ["helicopterpilot"]})
+    with pytest.raises(ValidationError):
+        Config.model_validate({"immune_roles": ["officer"]}, context=vietnam)
+
+
+def test_defaults_and_stored_legacy_fields():
+    config = Config.model_validate(
+        {"enabled": True, "caps_threshold": 3, "entry_grace_seconds": 30}
+    )
+    assert config.enabled
+    assert config.allow_final_attack_remaining_minutes == 45
+    assert config.immune_roles == ["spotter", "sniper", "tankcommander", "crewman"]
+
+
+def announcer(scenario, **config):
+    mod, teams, game, _, _ = scenario
+    mod.config = Config(enabled=True, **config)
+    rcon = Mock()
+    defender = teams["allies"]["squads"]["Baker"]["players"][0]
+    return mod, teams, game, rcon, defender
+
+
+def test_start_announcement_targets_each_team_once(scenario):
+    mod, teams, game, rcon, _ = announcer(
+        scenario,
+        winning_team_message="win {attack_allowed_minutes}",
+        losing_team_message="lose {remaining_minutes}",
+    )
+    for _ in range(3):
+        mod.server_punitions_to_apply(teams, game, rcon=rcon)
+    assert rcon.bulk_message_players.call_args_list == [
+        ((["attacker"], ["win 45"]),),
+        ((["defender"], ["lose 60"]),),
+    ]
+    rcon.message_all_players.assert_not_called()
+
+
+def test_empty_announcement_is_not_sent(scenario):
+    mod, teams, game, rcon, _ = announcer(scenario, losing_team_message=" ")
+    mod.server_punitions_to_apply(teams, game, rcon=rcon)
+    assert [c.args[0] for c in rcon.bulk_message_players.call_args_list] == [
+        ["attacker"]
+    ]
+
+
+def test_new_four_one_after_recapture_is_announced_again(scenario):
+    mod, teams, game, rcon, _ = announcer(scenario)
+    mod.server_punitions_to_apply(teams, game, rcon=rcon)
+    game.update(axis_score=3, allied_score=2)
+    mod.server_punitions_to_apply(teams, game, rcon=rcon)
+    game.update(axis_score=4, allied_score=1)
+    mod.server_punitions_to_apply(teams, game, rcon=rcon)
+    assert rcon.bulk_message_players.call_count == 4
+
+
+def test_tracking_reset_does_not_repeat_the_announcement(scenario):
+    mod, teams, game, rcon, _ = announcer(scenario)
+    mod.server_punitions_to_apply(teams, game, rcon=rcon)
+    mod.config.warning_message = "Changed {player_name}"
+    mod.server_punitions_to_apply(teams, game, rcon=rcon)
+    assert rcon.bulk_message_players.call_count == 2
+
+
+def test_lifted_announcement_once_after_a_protection(scenario):
+    mod, teams, game, rcon, _ = announcer(
+        scenario, protection_lifted_message="go {attack_allowed_minutes}"
+    )
+    mod.server_punitions_to_apply(teams, game, rcon=rcon)
+    game["time_remaining"] = timedelta(minutes=45)
+    for _ in range(3):
+        assert not mod.server_punitions_to_apply(teams, game, rcon=rcon)
+    rcon.message_all_players.assert_called_once_with("go 45")
+
+
+def test_no_lifted_announcement_without_a_running_protection(scenario):
+    mod, teams, game, rcon, _ = announcer(scenario)
+    game["time_remaining"] = timedelta(minutes=40)
+    mod.server_punitions_to_apply(teams, game, rcon=rcon)
+    rcon.bulk_message_players.assert_not_called()
+    rcon.message_all_players.assert_not_called()
+
+
+def test_dry_run_announcements_are_audited_but_not_sent(scenario, monkeypatch):
+    mod, teams, game, rcon, _ = announcer(scenario, dry_run=True)
+    session = Mock()
+
+    @contextmanager
+    def fake_session():
+        yield session
+
+    monkeypatch.setattr(antisteamroll, "enter_session", fake_session)
+    mod.server_punitions_to_apply(teams, game, rcon=rcon)
+    mod.server_punitions_to_apply(teams, game, rcon=rcon)
+    rcon.bulk_message_players.assert_not_called()
+    entry = session.add.call_args.args[0]
+    assert entry.command == "antisteamroll_announcement"
+    assert entry.command_result == "dry_run"
+    assert session.add.call_count == 1
+
+
+def test_failed_announcement_is_retried(scenario):
+    mod, teams, game, rcon, _ = announcer(scenario)
+    rcon.bulk_message_players.side_effect = [HLLCommandFailedError("down"), True, True]
+    mod.server_punitions_to_apply(teams, game, rcon=rcon)
+    mod.server_punitions_to_apply(teams, game, rcon=rcon)
+    assert rcon.bulk_message_players.call_count == 3
+
+
+def test_announcement_goes_to_discord_when_configured(scenario, monkeypatch):
+    mod, teams, game, rcon, _ = announcer(
+        scenario, discord_webhook_url="https://discord.com/api/webhooks/example"
+    )
+    discord = Mock()
+    monkeypatch.setattr(antisteamroll, "send_to_discord_audit", discord)
+    mod.server_punitions_to_apply(teams, game, rcon=rcon)
+    assert "axis 4-1" in discord.call_args.kwargs["message"]
+    assert (
+        discord.call_args.kwargs["command_name"] == "antisteamroll_protection_started"
+    )
+
+
+def test_executor_passes_rcon_for_announcements(scenario):
+    mod, teams, game, _, _ = scenario
+    rcon = Mock()
+    rcon.get_team_view.return_value = teams
+    rcon.get_gamestate.return_value = game
+    get_punitions_to_apply(rcon, [mod])
+    assert rcon.bulk_message_players.call_count == 2

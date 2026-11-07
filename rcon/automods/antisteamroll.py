@@ -16,6 +16,7 @@ from rcon.automods.models import (
     PunitionsToApply,
 )
 from rcon.cache_utils import get_redis_client
+from rcon.discord import send_to_discord_audit
 from rcon.logs.loop import on_match_end, on_match_start
 from rcon.maps import GameMode
 from rcon.models import AuditLog, enter_session
@@ -26,6 +27,15 @@ logger = logging.getLogger(__name__)
 AUTHOR = "AutoMod_AntiSteamroll"
 STATE_TTL = 120
 MAX_SAMPLE_GAP = 15
+# Inset on every edge of the protected sector to avoid border false positives
+# (a standard grid cell is 20000 world units, so 1000 is about 10 metres).
+BOUNDARY_MARGIN_UNITS = 1000
+# Continuous observed presence required before any action (cycles run every ~5 s).
+ENTRY_GRACE_SECONDS = 10
+# Warnings/punishments are forgotten after this long outside the protected sector.
+VIOLATION_RESET_SECONDS = 120
+# Announcement bookkeeping only needs to outlive one match.
+ANNOUNCEMENT_TTL = 3 * 60 * 60
 # Upper bound for an "ended" marker whose end-of-match snapshot could not be
 # taken; the post-match screen lasts a couple of minutes at most.
 ENDED_MARKER_TTL = 15 * 60
@@ -37,6 +47,18 @@ def state_key(server_info):
 
 def match_key(server_info):
     return f"{state_key(server_info)}:match"
+
+
+def announcement_key(server_info):
+    return f"{state_key(server_info)}:announcement"
+
+
+def team_player_ids(team_view, team):
+    team_data = team_view.get(team) or {}
+    players = [team_data["commander"]] if team_data.get("commander") else []
+    for squad in (team_data.get("squads") or {}).values():
+        players.extend(squad.get("players", []))
+    return [player["player_id"] for player in players if player.get("player_id")]
 
 
 def new_match_marker():
@@ -146,8 +168,14 @@ class AntiSteamrollAutomod:
             self.red.delete(self.key)
         return self.config.enabled
 
-    def server_punitions_to_apply(self, team_view, game_state):
-        """Evaluate one server snapshot, including empty teams and score transitions."""
+    def server_punitions_to_apply(self, team_view, game_state, rcon=None):
+        """Evaluate one server snapshot, including empty teams and score transitions.
+
+        Protection applies in Warfare while the score is 4-1, the remaining time is
+        above ``allow_final_attack_remaining_minutes`` and the population reaches
+        ``min_players``. ``rcon`` is used to send the protection announcements; without
+        it (or in dry-run) nothing is sent to players.
+        """
         result = PunitionsToApply()
         remaining = game_state["time_remaining"].total_seconds()
         scores = (game_state["allied_score"], game_state["axis_score"])
@@ -157,17 +185,16 @@ class AntiSteamrollAutomod:
         if (
             not self.config.enabled
             or game_state["game_mode"] != GameMode.WARFARE
-            or scores[0] + scores[1] != 5
-            or min(scores) <= 0
-            or max(scores) < self.config.caps_threshold
-            or remaining <= self.config.allow_final_attack_remaining_minutes * 60
+            or sorted(scores) != [1, 4]
             or sum(
                 team_view.get(team, {}).get("count", 0) for team in ("allies", "axis")
             )
             < self.config.min_players
             or match.get("active") is False
         ):
-            self.red.delete(self.key)
+            # Protection is not running: the next 4-1 (even with the same score
+            # as a previous one) is a new protection that must be announced.
+            self.red.delete(self.key, announcement_key(self.server_info))
             return result
 
         sector = final_sector(layer_id, dominant, self.server_info.game)
@@ -178,6 +205,15 @@ class AntiSteamrollAutomod:
             )
             self.red.delete(self.key)
             return result
+
+        announcement_context = [match.get("id"), layer_id, list(scores)]
+        if remaining <= self.config.allow_final_attack_remaining_minutes * 60:
+            self.announce_lifted(rcon, announcement_context, layer_id, remaining)
+            self.red.delete(self.key)
+            return result
+        self.announce_started(
+            rcon, announcement_context, team_view, layer_id, dominant, remaining
+        )
 
         now = time.time()
         context = [
@@ -192,15 +228,10 @@ class AntiSteamrollAutomod:
             or remaining > state.get("remaining", remaining)
             or now - state.get("observed_at", now) > MAX_SAMPLE_GAP
         ):
-            state = {"context": context, "started_remaining": remaining, "players": {}}
+            state = {"context": context, "players": {}}
         state.update(remaining=remaining, observed_at=now)
-        duration = self.config.protection_duration_minutes * 60
-        # Retain released state until the score/context changes, rather than restarting protection.
-        if duration and state["started_remaining"] - remaining >= duration:
-            state["players"] = {}
-            self.red.set(self.key, json.dumps(state), ex=STATE_TTL)
-            return result
 
+        immune_roles = set(self.config.immune_roles)
         candidates = []
         team_data = team_view.get(dominant, {})
         if team_data.get("commander"):
@@ -217,16 +248,15 @@ class AntiSteamrollAutomod:
             if player.get("team") != dominant:
                 continue
             connected.add(player_id)
+            if player.get("role") in immune_roles:
+                continue
             if not inside_protected_sector(
-                player.get("world_position"), sector, self.config.boundary_margin_units
+                player.get("world_position"), sector, BOUNDARY_MARGIN_UNITS
             ):
                 continue
             present.add(player_id)
             previous = state["players"].get(player_id)
-            if (
-                previous
-                and now - previous["last_inside"] >= self.config.violation_reset_seconds
-            ):
+            if previous and now - previous["last_inside"] >= VIOLATION_RESET_SECONDS:
                 del state["players"][player_id]
             history = state["players"].setdefault(
                 player_id,
@@ -241,7 +271,7 @@ class AntiSteamrollAutomod:
             if history["entered"] is None:
                 history["entered"] = now
             history["last_inside"] = now
-            if now - history["entered"] < self.config.entry_grace_seconds:
+            if now - history["entered"] < ENTRY_GRACE_SECONDS:
                 continue
             action = self.next_action(history, now)
             if action is None:
@@ -284,14 +314,142 @@ class AntiSteamrollAutomod:
         state["players"] = {
             key: value
             for key, value in state["players"].items()
-            if key in connected
-            and now - value["last_inside"] < self.config.violation_reset_seconds
+            if key in connected and now - value["last_inside"] < VIOLATION_RESET_SECONDS
         }
         for player_id, history in state["players"].items():
             if player_id not in present:
                 history["entered"] = None
         self.red.set(self.key, json.dumps(state), ex=STATE_TTL)
         return result
+
+    def announce_started(
+        self, rcon, context, team_view, layer_id, dominant, remaining
+    ) -> None:
+        """Tell each team, once per 4-1 situation, that the last point is protected.
+
+        The context (match, layer, score) is tracked separately from the
+        enforcement state so a reset of the latter never repeats the announcement;
+        a recapture followed by a new 4-1 changes the score and is announced again.
+        """
+        announced = self._announcement_state()
+        if announced.get("context") == context and announced.get("activated"):
+            return
+        losing = "axis" if dominant == "allies" else "allies"
+        deliveries = [
+            (team_player_ids(team_view, dominant), self.config.winning_team_message),
+            (team_player_ids(team_view, losing), self.config.losing_team_message),
+        ]
+        summary = (
+            f"Protection active on {layer_id} ({dominant} 4-1), lifts at "
+            f"{self.config.allow_final_attack_remaining_minutes} minutes remaining"
+        )
+        if self._announce(rcon, "protection_started", deliveries, remaining, summary):
+            self._save_announcement_state(
+                {"context": context, "activated": True, "lifted": False}
+            )
+
+    def announce_lifted(self, rcon, context, layer_id, remaining) -> None:
+        """Tell all players, once, that a running protection has been lifted."""
+        announced = self._announcement_state()
+        if (
+            announced.get("context") != context
+            or not announced.get("activated")
+            or announced.get("lifted")
+        ):
+            return
+        summary = f"Protection lifted on {layer_id}: the last point can be attacked"
+        deliveries = [(None, self.config.protection_lifted_message)]
+        if self._announce(rcon, "protection_lifted", deliveries, remaining, summary):
+            self._save_announcement_state(dict(announced, lifted=True))
+
+    def _announcement_state(self):
+        return json.loads(self.red.get(announcement_key(self.server_info)) or "{}")
+
+    def _save_announcement_state(self, state):
+        self.red.set(
+            announcement_key(self.server_info),
+            json.dumps(state),
+            ex=ANNOUNCEMENT_TTL,
+        )
+
+    def _announce(self, rcon, kind, deliveries, remaining, summary) -> bool:
+        """Send ``(player_ids, message)`` deliveries; ``None`` ids means all players.
+
+        Returns whether the announcement can be considered done. Empty messages
+        are skipped. Without an RCON connection nothing is sent and the
+        announcement is retried on a later cycle. A failed send is logged and
+        retried instead of stopping the Automod loop.
+        """
+        values = {
+            "remaining_minutes": int(remaining // 60),
+            "attack_allowed_minutes": self.config.allow_final_attack_remaining_minutes,
+        }
+        deliveries = [
+            (player_ids, template.format(**values))
+            for player_ids, template in deliveries
+            if template.strip() and player_ids != []
+        ]
+        if not self.config.dry_run:
+            if rcon is None:
+                return False
+            try:
+                for player_ids, message in deliveries:
+                    if player_ids is None:
+                        rcon.message_all_players(message)
+                    else:
+                        rcon.bulk_message_players(
+                            player_ids, [message] * len(player_ids)
+                        )
+            except Exception:
+                logger.exception("Anti-Steamroll: could not send %s announcement", kind)
+                return False
+
+        logger.info(
+            "Anti-Steamroll %s (dry_run=%s): %s", kind, self.config.dry_run, summary
+        )
+        author = AUTHOR + ("-DryRun" if self.config.dry_run else "")
+        self._record_announcement(kind, author, deliveries, summary)
+        if self.config.discord_webhook_url is not None:
+            try:
+                send_to_discord_audit(
+                    message=summary,
+                    command_name=f"antisteamroll_{kind}",
+                    by=author,
+                    webhookurls=[self.config.discord_webhook_url],
+                    silent=False,
+                )
+            except Exception:
+                logger.exception(
+                    "Anti-Steamroll: could not post the %s announcement to Discord",
+                    kind,
+                )
+        return True
+
+    def _record_announcement(self, kind, author, deliveries, summary) -> None:
+        try:
+            with enter_session() as session:
+                session.add(
+                    AuditLog(
+                        username=author,
+                        command="antisteamroll_announcement",
+                        command_arguments=json.dumps(
+                            {
+                                "kind": kind,
+                                "summary": summary,
+                                "messages": [message for _, message in deliveries],
+                                "game": self.server_info.game.value,
+                                "server_number": self.server_info.number,
+                            }
+                        ),
+                        command_result="dry_run"
+                        if self.config.dry_run
+                        else "action_applied",
+                    )
+                )
+        except Exception:
+            logger.exception(
+                "Anti-Steamroll: could not write the audit log for %s", kind
+            )
 
     def current_match(self, layer_id, remaining):
         """Read the match marker, replacing an ended marker that is no longer current."""
