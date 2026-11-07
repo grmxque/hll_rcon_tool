@@ -18,6 +18,10 @@ sudo usermod -aG docker "$USER"   # puis fermer et rouvrir le terminal WSL
 docker run --rm hello-world
 ```
 
+`permission denied ... /var/run/docker.sock` signifie que la session a été ouverte avant l'ajout au
+groupe : il faut rouvrir le terminal (`wsl --shutdown` depuis Windows au besoin), ou préfixer
+temporairement les commandes avec `sg docker -c "..."`.
+
 ## 2. Configuration (une seule fois)
 
 ```bash
@@ -37,6 +41,18 @@ export DJANGO_DEBUG=1
 export DEBUG=1
 ```
 
+Si un Redis tourne déjà sur la machine (paquet `redis-server`, port 6379 occupé : `ss -ltn | grep 6379`),
+publier le Redis Docker sur un autre port. En lancement natif, **les deux** variables doivent valoir le
+port de l'hôte, car le code lit `HLL_REDIS_URL` et `HLL_REDIS_HOST`/`HLL_REDIS_PORT` :
+
+```bash
+export HLL_REDIS_HOST_PORT=6380
+export HLL_REDIS_PORT=6380
+```
+
+Toute commande `docker compose -f docker-compose.dev.yml ...` doit être lancée après `source dev.env`
+(images, ports et identifiants en viennent).
+
 ## 3. Démarrer les dépendances et initialiser la base
 
 ```bash
@@ -50,6 +66,8 @@ uv run python -m rcon.user_config.seed_db
 PYTHONPATH=. uv run ./rconweb/manage.py migrate --noinput   # crée aussi les permissions du fork
 PYTHONPATH=. uv run ./rconweb/manage.py createsuperuser
 ```
+
+`... not found, returning defaults` pendant `init_db` est normal sur une base neuve.
 
 ## 4. Lancer l'application
 

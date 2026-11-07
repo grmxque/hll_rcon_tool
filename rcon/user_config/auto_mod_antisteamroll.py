@@ -19,13 +19,13 @@ MESSAGE_PLACEHOLDERS = frozenset(
 
 
 class AutoModAntiSteamrollUserConfig(BaseUserConfig):
-    """Live settings for protecting the losing team's final Warfare sector.
+    """Live settings for protecting the losing team's final Warfare sector."""
 
-    Unknown keys are ignored when loading, so a stored config that still holds a
-    removed or renamed field keeps its other values instead of failing
-    validation and silently falling back to the defaults (disabled). API writes
-    reject unknown keys in ``save_to_db``.
-    """
+    # This docstring is published in the JSON schema shown by the settings UI.
+    # Unknown keys are ignored when loading (pydantic default), so a stored config
+    # that still holds a removed or renamed field keeps its other values instead
+    # of failing validation and silently falling back to the defaults (disabled).
+    # API writes reject unknown keys in ``save_to_db``.
 
     NAME = "AutoModAntiSteamrollUserConfig"
 
