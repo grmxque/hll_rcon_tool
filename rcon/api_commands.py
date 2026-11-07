@@ -56,6 +56,7 @@ from rcon.user_config.auto_mod_solo_tank import AutoModNoSoloTankUserConfig
 from rcon.user_config.ban_tk_on_connect import BanTeamKillOnConnectUserConfig
 from rcon.user_config.camera_notification import CameraNotificationUserConfig
 from rcon.user_config.chat_commands import ChatCommandsUserConfig
+from rcon.user_config.end_of_game_rewards import EndOfGameRewardsUserConfig
 from rcon.user_config.expired_vips import ExpiredVipsUserConfig
 from rcon.user_config.log_line_webhooks import LogLineWebhookUserConfig
 from rcon.user_config.log_stream import LogStreamUserConfig
@@ -87,6 +88,7 @@ from rcon.user_config.webhooks import (
     KillsWebhooksUserConfig,
     WatchlistWebhooksUserConfig,
 )
+from rcon.user_config.welcome_stats import WelcomeStatsUserConfig
 from rcon.utils import MISSING
 from rcon.vote_map import VoteMap
 from rcon.watchlist import PlayerWatch
@@ -998,6 +1000,82 @@ class RconAPI(Rcon):
             command_name=inspect.currentframe().f_code.co_name,
             by=by,
             model=AutoModAntiSteamrollUserConfig,
+            data=config or kwargs,
+            dry_run=False,
+            reset_to_default=reset_to_default,
+        )
+
+    def get_welcome_stats_config(self) -> WelcomeStatsUserConfig:
+        server_info = server_info_for_rcon(self)
+        return WelcomeStatsUserConfig.load_from_db(
+            game=server_info.game, server_number=server_info.number
+        )
+
+    def validate_welcome_stats_config(
+        self,
+        by: str,
+        config: dict[str, Any] | BaseUserConfig | None = None,
+        reset_to_default: bool = False,
+        **kwargs,
+    ) -> bool:
+        return self._validate_user_config(
+            command_name=inspect.currentframe().f_code.co_name,
+            by=by,
+            model=WelcomeStatsUserConfig,
+            data=config or kwargs,
+            dry_run=True,
+            reset_to_default=reset_to_default,
+        )
+
+    def set_welcome_stats_config(
+        self,
+        by: str,
+        config: dict[str, Any] | BaseUserConfig | None = None,
+        reset_to_default: bool = False,
+        **kwargs,
+    ) -> bool:
+        return self._validate_user_config(
+            command_name=inspect.currentframe().f_code.co_name,
+            by=by,
+            model=WelcomeStatsUserConfig,
+            data=config or kwargs,
+            dry_run=False,
+            reset_to_default=reset_to_default,
+        )
+
+    def get_end_of_game_rewards_config(self) -> EndOfGameRewardsUserConfig:
+        server_info = server_info_for_rcon(self)
+        return EndOfGameRewardsUserConfig.load_from_db(
+            game=server_info.game, server_number=server_info.number
+        )
+
+    def validate_end_of_game_rewards_config(
+        self,
+        by: str,
+        config: dict[str, Any] | BaseUserConfig | None = None,
+        reset_to_default: bool = False,
+        **kwargs,
+    ) -> bool:
+        return self._validate_user_config(
+            command_name=inspect.currentframe().f_code.co_name,
+            by=by,
+            model=EndOfGameRewardsUserConfig,
+            data=config or kwargs,
+            dry_run=True,
+            reset_to_default=reset_to_default,
+        )
+
+    def set_end_of_game_rewards_config(
+        self,
+        by: str,
+        config: dict[str, Any] | BaseUserConfig | None = None,
+        reset_to_default: bool = False,
+        **kwargs,
+    ) -> bool:
+        return self._validate_user_config(
+            command_name=inspect.currentframe().f_code.co_name,
+            by=by,
+            model=EndOfGameRewardsUserConfig,
             data=config or kwargs,
             dry_run=False,
             reset_to_default=reset_to_default,

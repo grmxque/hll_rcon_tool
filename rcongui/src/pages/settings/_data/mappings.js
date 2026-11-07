@@ -71,6 +71,16 @@ export const others = [
     name: "Seeder VIP Reward",
   },
   {
+    path: "/settings/others/welcome-stats",
+    command: "welcome_stats_config",
+    name: "Welcome Stats",
+  },
+  {
+    path: "/settings/others/end-of-game-rewards",
+    command: "end_of_game_rewards_config",
+    name: "End of Game Rewards",
+  },
+  {
     path: "/settings/others/game-server",
     command: "rcon_connection_settings_config",
     name: "Game Server Connection Settings",
