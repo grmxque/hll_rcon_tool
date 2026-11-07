@@ -4,6 +4,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from rcon.user_config.auto_broadcast import AutoBroadcastUserConfig
 from rcon.user_config.auto_kick import AutoVoteKickUserConfig
+from rcon.user_config.auto_mod_antisteamroll import AutoModAntiSteamrollUserConfig
 from rcon.user_config.auto_mod_level import AutoModLevelUserConfig
 from rcon.user_config.auto_mod_no_leader import AutoModNoLeaderUserConfig
 from rcon.user_config.auto_mod_seeding import AutoModSeedingUserConfig
@@ -45,6 +46,18 @@ from .auth import api_response, login_required
 from .decorators import permission_required, require_http_methods
 
 logger = getLogger(__name__)
+
+
+@csrf_exempt
+@login_required()
+@permission_required("api.can_view_auto_mod_antisteamroll_config", raise_exception=True)
+@require_http_methods(["GET"])
+def describe_auto_mod_antisteamroll_config(request):
+    return api_response(
+        result=AutoModAntiSteamrollUserConfig.model_json_schema(),
+        command="describe_auto_mod_antisteamroll_config",
+        failed=False,
+    )
 
 
 @csrf_exempt

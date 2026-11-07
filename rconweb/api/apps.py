@@ -3,6 +3,7 @@ from logging import getLogger
 import django.db.utils
 from django.apps import AppConfig
 from django.conf import settings
+from django.db.models.signals import post_migrate
 
 from rcon.cache_utils import RedisCached, get_redis_pool, invalidates
 
@@ -14,6 +15,10 @@ class ApiConfig(AppConfig):
 
     def ready(self):
         from rcon.audit import set_registered_mods
+
+        from .fork_permissions import ensure_fork_permissions
+
+        post_migrate.connect(ensure_fork_permissions, sender=self)
 
         # Can't import from rconweb.api until Django is ready
         from .auth import get_moderators_accounts

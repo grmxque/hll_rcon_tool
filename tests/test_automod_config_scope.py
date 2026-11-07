@@ -7,6 +7,7 @@ from rcon.automods.models import ActionMethod, PunitionsToApply
 from rcon.automods.tk_autoban import auto_ban_if_tks_right_after_connection
 from rcon.game.hllv.profile import HLLV_PROFILE
 from rcon.types import GameEnum, ServerInfo
+from rcon.user_config.auto_mod_antisteamroll import AutoModAntiSteamrollUserConfig
 from rcon.user_config.auto_mod_level import AutoModLevelUserConfig
 from rcon.user_config.auto_mod_no_leader import AutoModNoLeaderUserConfig
 from rcon.user_config.auto_mod_seeding import AutoModSeedingUserConfig
@@ -45,6 +46,7 @@ def test_squad_automods_load_configs_from_rcon_scope(monkeypatch):
     monkeypatch.setattr("rcon.automods.automod.get_redis_client", mock.Mock())
 
     configs = (
+        AutoModAntiSteamrollUserConfig,
         AutoModLevelUserConfig,
         AutoModNoLeaderUserConfig,
         AutoModSeedingUserConfig,

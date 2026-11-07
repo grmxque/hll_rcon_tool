@@ -10,6 +10,7 @@ if not os.getenv("HLL_MAINTENANCE_CONTAINER") and not os.getenv(
     from . import (
         auto_broadcast,
         auto_kick,
+        auto_mod_antisteamroll,
         auto_mod_level,
         auto_mod_no_leader,
         auto_mod_seeding,
@@ -35,6 +36,7 @@ if not os.getenv("HLL_MAINTENANCE_CONTAINER") and not os.getenv(
     __all__ = [
         "auto_broadcast",
         "auto_kick",
+        "auto_mod_antisteamroll",
         "auto_mod_level",
         "auto_mod_no_leader",
         "auto_mod_seeding",

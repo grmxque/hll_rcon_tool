@@ -17,6 +17,10 @@ import CancelIcon from "@mui/icons-material/Cancel";
 import WebhookIcon from "@mui/icons-material/Webhook";
 
 const AutomodsCard = () => {
+  const { data: antiSteamroll } = useQuery({
+    queryKey: ["settings", "automods", "anti-steamroll"],
+    queryFn: () => cmd.GET_ANTISTEAMROLL_CONFIG(),
+  });
   // Fetch all automod settings
   const { data: seeding } = useQuery({
     queryKey: ["settings", "automods", "seeding"],
@@ -91,6 +95,14 @@ const AutomodsCard = () => {
   });
 
   const automodSettings = [
+    {
+      key: "anti_steamroll",
+      label: "Anti-Steamroll",
+      value: antiSteamroll?.enabled,
+      webhook: antiSteamroll?.discord_webhook_url,
+      category: "Automods",
+      path: "/settings/automods/anti-steamroll",
+    },
     {
       key: "seeding",
       label: "Seeding",

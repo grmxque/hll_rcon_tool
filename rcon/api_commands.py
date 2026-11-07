@@ -48,6 +48,7 @@ from rcon.types import (
 )
 from rcon.user_config.auto_broadcast import AutoBroadcastUserConfig
 from rcon.user_config.auto_kick import AutoVoteKickUserConfig
+from rcon.user_config.auto_mod_antisteamroll import AutoModAntiSteamrollUserConfig
 from rcon.user_config.auto_mod_level import AutoModLevelUserConfig
 from rcon.user_config.auto_mod_no_leader import AutoModNoLeaderUserConfig
 from rcon.user_config.auto_mod_seeding import AutoModSeedingUserConfig
@@ -960,6 +961,44 @@ class RconAPI(Rcon):
             by=by,
             model=AutoModSeedingUserConfig,
             data=user_config or kwargs,
+            dry_run=False,
+            reset_to_default=reset_to_default,
+        )
+
+    def get_auto_mod_antisteamroll_config(self) -> AutoModAntiSteamrollUserConfig:
+        server_info = server_info_for_rcon(self)
+        return AutoModAntiSteamrollUserConfig.load_from_db(
+            game=server_info.game, server_number=server_info.number
+        )
+
+    def validate_auto_mod_antisteamroll_config(
+        self,
+        by: str,
+        config: dict[str, Any] | BaseUserConfig | None = None,
+        reset_to_default: bool = False,
+        **kwargs,
+    ) -> bool:
+        return self._validate_user_config(
+            command_name=inspect.currentframe().f_code.co_name,
+            by=by,
+            model=AutoModAntiSteamrollUserConfig,
+            data=config or kwargs,
+            dry_run=True,
+            reset_to_default=reset_to_default,
+        )
+
+    def set_auto_mod_antisteamroll_config(
+        self,
+        by: str,
+        config: dict[str, Any] | BaseUserConfig | None = None,
+        reset_to_default: bool = False,
+        **kwargs,
+    ) -> bool:
+        return self._validate_user_config(
+            command_name=inspect.currentframe().f_code.co_name,
+            by=by,
+            model=AutoModAntiSteamrollUserConfig,
+            data=config or kwargs,
             dry_run=False,
             reset_to_default=reset_to_default,
         )

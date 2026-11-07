@@ -6,6 +6,7 @@ from pydantic import HttpUrl
 from redis.client import Redis
 
 from rcon.automods import server_info_for_automod
+from rcon.automods.antisteamroll import AntiSteamrollAutomod
 from rcon.automods.level_thresholds import LevelThresholdsAutomod
 from rcon.automods.models import ActionMethod, PunishPlayer, PunitionsToApply
 from rcon.automods.no_leader import NoLeaderAutomod
@@ -18,6 +19,7 @@ from rcon.hooks import inject_player_ids
 from rcon.logs.loop import on_connected, on_kill
 from rcon.rcon import Rcon, get_rcon
 from rcon.types import GetDetailedPlayer, StructuredLogLineType
+from rcon.user_config.auto_mod_antisteamroll import AutoModAntiSteamrollUserConfig
 from rcon.user_config.auto_mod_level import AutoModLevelUserConfig
 from rcon.user_config.auto_mod_no_leader import AutoModNoLeaderUserConfig
 from rcon.user_config.auto_mod_seeding import AutoModSeedingUserConfig
@@ -33,12 +35,19 @@ def get_punitions_to_apply(rcon, moderators) -> PunitionsToApply:
     gamestate = rcon.get_gamestate()
     punitions_to_apply = PunitionsToApply()
 
+    server_moderators = [
+        mod
+        for mod in moderators
+        if callable(getattr(mod, "server_punitions_to_apply", None))
+    ]
+    squad_moderators = [mod for mod in moderators if mod not in server_moderators]
+
     for team in ["allies", "axis"]:
         if not team_view.get(team):
             continue
 
         if team_view[team]["commander"] is not None:
-            for mod in moderators:
+            for mod in squad_moderators:
                 punitions_to_apply.merge(
                     mod.punitions_to_apply(
                         team_view,
@@ -52,12 +61,24 @@ def get_punitions_to_apply(rcon, moderators) -> PunitionsToApply:
                 )
 
         for squad_name, squad in team_view[team]["squads"].items():
-            for mod in moderators:
+            for mod in squad_moderators:
                 punitions_to_apply.merge(
                     mod.punitions_to_apply(
                         team_view, squad_name, team, squad, gamestate
                     )
                 )
+
+    # Server-wide rules (fork: Anti-Steamroll) are merged last so the upstream
+    # squad automods keep their behaviour. `merge` keeps a single punish per
+    # player: a dropped punish is rolled back so its escalation is not counted.
+    for mod in server_moderators:
+        server_punitions = mod.server_punitions_to_apply(
+            team_view, gamestate, rcon=rcon
+        )
+        for aplayer in server_punitions.punish:
+            if any(p.player_id == aplayer.player_id for p in punitions_to_apply.punish):
+                mod.player_punish_failed(aplayer)
+        punitions_to_apply.merge(server_punitions)
 
     return punitions_to_apply
 
@@ -114,6 +135,11 @@ def _do_punitions(
                     msg=f"---> KICKING <---: {aplayer}",
                     author=aplayer.details.author,
                 )
+            # Fork hook: lets an automod record actions that actually went through.
+            for mod in mods:
+                audit_action = getattr(mod, "audit_action", None)
+                if callable(audit_action):
+                    audit_action(method, aplayer)
         except HLLCommandFailedError:
             logger.warning(
                 "Couldn't `%s` player `%s`. Will retry.", repr(method), repr(aplayer)
@@ -165,6 +191,7 @@ def enabled_moderators(rcon: Rcon | None = None):
     no_leader_config = AutoModNoLeaderUserConfig.load_from_db(**scope)
     seeding_config = AutoModSeedingUserConfig.load_from_db(**scope)
     solo_tank_config = AutoModNoSoloTankUserConfig.load_from_db(**scope)
+    antisteamroll_config = AutoModAntiSteamrollUserConfig.load_from_db(**scope)
 
     return list(
         filter(
@@ -174,6 +201,7 @@ def enabled_moderators(rcon: Rcon | None = None):
                 SeedingRulesAutomod(seeding_config, red),
                 LevelThresholdsAutomod(level_thresholds_config, red),
                 NoSoloTankAutomod(solo_tank_config, red),
+                AntiSteamrollAutomod(antisteamroll_config, red, server_info),
             ],
         )
     )
