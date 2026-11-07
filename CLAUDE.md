@@ -32,18 +32,22 @@ Python ≥ 3.12, managed with `uv` (`pyproject.toml`, `uv.lock`). Frontend: Node
 
 ```bash
 uv sync                                          # install backend + dev deps into .venv
-uv run pytest                                    # all backend tests (no DB/Redis needed)
-uv run pytest tests/test_antisteamroll_automod.py::test_name   # single test
+source dev.env && uv run pytest tests/          # full suite (Postgres + Redis running, see docs/local-dev.md)
+DEBUG=1 SERVER_NUMBER=1 HLL_GAME=hll uv run pytest tests/test_antisteamroll_automod.py::test_name   # single test, no services
+REACT_APP_API_URL=/api/ npm run build            # (in rcongui/) production build needs this variable
 uv run ruff check --fix . && uv run ruff format .   # lint + format (also run by pre-commit)
 
 cd rcongui && npm ci
 npm run dev                                      # Vite dev server (needs a running backend, see example.env)
-npm run build
 npm run lint
 node --experimental-vm-modules "src/pages/settings/[configs]/anti-steamroll.test.mjs"   # node:test file
 ```
 
-Backend tests run without PostgreSQL: `BaseUserConfig.load_from_db` returns defaults when `HLL_DB_URL` is unset,
+Local stack (Postgres/Redis in Docker, Django + Vite native, no game server): `docs/local-dev.md`.
+Tests import `rcon` modules that need Redis or `DEBUG=1` plus `SERVER_NUMBER`/`HLL_GAME`; the DB-backed tests
+need PostgreSQL (`source dev.env`, as in `.github/workflows/pr.yml`).
+
+Many backend tests also run without PostgreSQL: `BaseUserConfig.load_from_db` returns defaults when `HLL_DB_URL` is unset,
 and Redis is replaced with `fakeredis` / mocks. There is no Django test setup (`rconweb/api/tests.py` is empty),
 so tests import `rcon.*` directly and fake the Django boundary.
 
