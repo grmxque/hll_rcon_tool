@@ -26,28 +26,75 @@ logger = logging.getLogger(__name__)
 AUTHOR = "AutoMod_AntiSteamroll"
 STATE_TTL = 120
 MAX_SAMPLE_GAP = 15
+# Upper bound for an "ended" marker whose end-of-match snapshot could not be
+# taken; the post-match screen lasts a couple of minutes at most.
+ENDED_MARKER_TTL = 15 * 60
 
 
 def state_key(server_info):
     return f"antisteamroll:{server_info.game.value}:{server_info.number}"
 
 
-def reset_match(rcon, *, active):
-    red = get_redis_client()
-    key = state_key(server_info_for_automod(rcon))
-    # The lifecycle marker also prevents sanctions on transitional post-match data.
-    red.set(f"{key}:match", json.dumps({"id": uuid.uuid4().hex, "active": active}))
-    red.delete(key)
+def match_key(server_info):
+    return f"{state_key(server_info)}:match"
+
+
+def new_match_marker():
+    return {"id": uuid.uuid4().hex, "active": True}
 
 
 @on_match_start
 def match_started(rcon, _log):
-    reset_match(rcon, active=True)
+    red = get_redis_client()
+    server_info = server_info_for_automod(rcon)
+    red.set(match_key(server_info), json.dumps(new_match_marker()))
+    red.delete(state_key(server_info))
 
 
 @on_match_end
 def match_ended(rcon, _log):
-    reset_match(rcon, active=False)
+    """Block enforcement on post-match data until the next match is observed.
+
+    The layer and remaining time at the end are recorded so the marker can be
+    recognised as stale if the following MATCH START log is missed (log loop
+    restart during the map change...), instead of disabling protection for the
+    whole next match.
+    """
+    red = get_redis_client()
+    server_info = server_info_for_automod(rcon)
+    marker = {"id": uuid.uuid4().hex, "active": False}
+    try:
+        game_state = rcon.get_gamestate()
+        marker["layer"] = game_state["current_map"]["id"]
+        marker["remaining"] = game_state["time_remaining"].total_seconds()
+        ttl = None
+    except Exception:
+        logger.warning(
+            "Anti-Steamroll: could not snapshot the ended match; the post-match "
+            "block will expire after %s seconds",
+            ENDED_MARKER_TTL,
+            exc_info=True,
+        )
+        ttl = ENDED_MARKER_TTL
+    red.set(match_key(server_info), json.dumps(marker), ex=ttl)
+    red.delete(state_key(server_info))
+
+
+def ended_match_is_current(marker, layer_id, remaining):
+    """Whether the server still shows the match the last MATCH ENDED belongs to.
+
+    A different layer, or more remaining time than at the end, means a new match
+    is running even though no MATCH START was received.
+    """
+    if marker.get("active") is not False:
+        return False
+    ended_layer = marker.get("layer")
+    ended_remaining = marker.get("remaining")
+    if ended_layer is None or ended_remaining is None:
+        return True  # No snapshot: bounded by ENDED_MARKER_TTL.
+    return (
+        ended_layer.casefold() == layer_id.casefold() and remaining <= ended_remaining
+    )
 
 
 def final_sector(layer_id, dominant_team, game):
@@ -104,7 +151,8 @@ class AntiSteamrollAutomod:
         result = PunitionsToApply()
         remaining = game_state["time_remaining"].total_seconds()
         scores = (game_state["allied_score"], game_state["axis_score"])
-        match = json.loads(self.red.get(f"{self.key}:match") or "{}")
+        layer_id = game_state["current_map"]["id"]
+        match = self.current_match(layer_id, remaining)
         dominant = "allies" if scores[0] > scores[1] else "axis"
         if (
             not self.config.enabled
@@ -122,7 +170,6 @@ class AntiSteamrollAutomod:
             self.red.delete(self.key)
             return result
 
-        layer_id = game_state["current_map"]["id"]
         sector = final_sector(layer_id, dominant, self.server_info.game)
         if sector is None:
             logger.warning(
@@ -208,7 +255,8 @@ class AntiSteamrollAutomod:
                 message=message.format(
                     player_name=player["name"],
                     team=dominant,
-                    remaining_minutes=self.config.allow_final_attack_remaining_minutes,
+                    remaining_minutes=int(remaining // 60),
+                    attack_allowed_minutes=self.config.allow_final_attack_remaining_minutes,
                     received_warnings=len(history["warnings"]),
                     max_warnings=self.config.number_of_warnings,
                     received_punishes=len(history["punishes"]),
@@ -244,6 +292,21 @@ class AntiSteamrollAutomod:
                 history["entered"] = None
         self.red.set(self.key, json.dumps(state), ex=STATE_TTL)
         return result
+
+    def current_match(self, layer_id, remaining):
+        """Read the match marker, replacing an ended marker that is no longer current."""
+        marker = json.loads(self.red.get(match_key(self.server_info)) or "{}")
+        if marker.get("active") is False and not ended_match_is_current(
+            marker, layer_id, remaining
+        ):
+            logger.warning(
+                "Anti-Steamroll: a new match is running on %s without a MATCH START "
+                "log; resuming protection",
+                layer_id,
+            )
+            marker = new_match_marker()
+            self.red.set(match_key(self.server_info), json.dumps(marker))
+        return marker
 
     def next_action(self, history, now):
         for method, key, limit, interval, message in (
@@ -291,26 +354,39 @@ class AntiSteamrollAutomod:
             self.red.set(self.key, json.dumps(state), ex=STATE_TTL)
 
     def audit_action(self, method: ActionMethod, player: PunishPlayer):
+        """Record an Anti-Steamroll action once it has been applied (or simulated).
+
+        Called by the Automod executor after the game command succeeded, so retried
+        failures are not recorded twice. An audit failure is logged but must not
+        stop the executor, which also runs the other automods.
+        """
         if player.details.author not in (AUTHOR, f"{AUTHOR}-DryRun"):
             return
-        with enter_session() as session:
-            session.add(
-                AuditLog(
-                    username=player.details.author,
-                    command="antisteamroll_detection",
-                    command_arguments=json.dumps(
-                        {
-                            "player_id": player.player_id,
-                            "player_name": player.name,
-                            "team": player.team,
-                            "action": method.name,
-                            "message": player.details.message,
-                            "game": self.server_info.game.value,
-                            "server_number": self.server_info.number,
-                        }
-                    ),
-                    command_result="dry_run"
-                    if player.details.dry_run
-                    else "action_scheduled",
+        try:
+            with enter_session() as session:
+                session.add(
+                    AuditLog(
+                        username=player.details.author,
+                        command="antisteamroll_detection",
+                        command_arguments=json.dumps(
+                            {
+                                "player_id": player.player_id,
+                                "player_name": player.name,
+                                "team": player.team,
+                                "action": method.name,
+                                "message": player.details.message,
+                                "game": self.server_info.game.value,
+                                "server_number": self.server_info.number,
+                            }
+                        ),
+                        command_result="dry_run"
+                        if player.details.dry_run
+                        else "action_applied",
+                    )
                 )
+        except Exception:
+            logger.exception(
+                "Anti-Steamroll: could not write the audit log for %s %s",
+                method.name,
+                player.player_id,
             )

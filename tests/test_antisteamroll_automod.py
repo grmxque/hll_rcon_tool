@@ -25,6 +25,7 @@ from rcon.types import GameEnum, ServerInfo
 from rcon.user_config.auto_mod_antisteamroll import (
     AutoModAntiSteamrollUserConfig as Config,
 )
+from rcon.user_config.utils import InvalidKeysConfigurationError
 
 
 @pytest.fixture
@@ -180,6 +181,7 @@ def test_match_lifecycle_clears_same_map_and_blocks_post_match(scenario, monkeyp
     mod, teams, game, _, _ = scenario
     monkeypatch.setattr(antisteamroll, "get_redis_client", lambda: mod.red)
     rcon = Mock(server_info=mod.server_info)
+    rcon.get_gamestate.return_value = game
     assert confirmed(scenario)
     antisteamroll.match_ended(rcon, {})
     assert not mod.red.exists(mod.key)
@@ -499,7 +501,6 @@ def test_live_config_api_and_next_cycle(scenario, monkeypatch):
         {"warning_message": "{unknown}"},
         {"punish_message": "{player_name.__class__}"},
         {"kick_message": "{"},
-        {"unexpected": True},
     ],
 )
 def test_invalid_settings_are_rejected(values):
@@ -528,3 +529,138 @@ def test_webhook_serializes_for_standard_persistence_and_api():
     config = Config(discord_webhook_url="https://discord.com/api/webhooks/example")
     data = json.loads(json.dumps(config.model_dump()))
     assert data["discord_webhook_url"] == "https://discord.com/api/webhooks/example"
+
+
+def ended_match(scenario, monkeypatch, *, snapshot=True):
+    mod, _, game, _, _ = scenario
+    monkeypatch.setattr(antisteamroll, "get_redis_client", lambda: mod.red)
+    rcon = Mock(server_info=mod.server_info)
+    if snapshot:
+        rcon.get_gamestate.return_value = game
+    else:
+        rcon.get_gamestate.side_effect = HLLCommandFailedError("timeout")
+    antisteamroll.match_ended(rcon, {})
+    return rcon
+
+
+def test_missed_match_start_on_new_layer_resumes_protection(scenario, monkeypatch):
+    mod, _, game, _, _ = scenario
+    ended_match(scenario, monkeypatch)
+    assert not confirmed(scenario)
+    layer = hllrcon.HLLLayer.CARENTAN_WARFARE_NIGHT
+    game["current_map"] = {"id": layer.id}
+    sector = final_sector(layer.id, "axis", mod.server_info.game)
+    (x1, y1), (x2, y2) = sector.area
+    scenario[4]["world_position"] = {"x": (x1 + x2) / 2, "y": (y1 + y2) / 2, "z": 1}
+    assert confirmed(scenario).warning
+
+
+def test_missed_match_start_on_same_layer_resumes_for_whole_match(
+    scenario, monkeypatch
+):
+    mod, _, game, _, _ = scenario
+    ended_match(scenario, monkeypatch)
+    game["time_remaining"] = timedelta(minutes=90)
+    assert confirmed(scenario).warning
+    # The new match later passes below the remaining time of the ended one.
+    game["time_remaining"] = timedelta(minutes=50)
+    assert json.loads(mod.red.get(antisteamroll.match_key(mod.server_info)))["active"]
+
+
+def test_post_match_snapshot_failure_expires(scenario, monkeypatch):
+    mod = scenario[0]
+    ended_match(scenario, monkeypatch, snapshot=False)
+    assert not confirmed(scenario)
+    ttl = mod.red.ttl(antisteamroll.match_key(mod.server_info))
+    assert 0 < ttl <= antisteamroll.ENDED_MARKER_TTL
+
+
+def test_live_action_is_audited_once_applied(scenario, monkeypatch):
+    mod = scenario[0]
+    actions = confirmed(scenario)
+    session = Mock()
+
+    @contextmanager
+    def fake_session():
+        yield session
+
+    monkeypatch.setattr(antisteamroll, "enter_session", fake_session)
+    monkeypatch.setattr("rcon.automods.automod.audit", Mock())
+    rcon = Mock()
+    _do_punitions_for_moderators(rcon, actions, [mod])
+    rcon.message_player.assert_called_once()
+    assert session.add.call_args.args[0].command_result == "action_applied"
+
+
+def test_failed_command_is_not_audited(scenario, monkeypatch):
+    mod = scenario[0]
+    mod.config.number_of_warnings = 0
+    actions = confirmed(scenario)
+    audit_action = Mock()
+    monkeypatch.setattr(mod, "audit_action", audit_action)
+    monkeypatch.setattr("rcon.automods.automod.audit", Mock())
+    rcon = Mock()
+    rcon.punish.side_effect = HLLCommandFailedError("dead")
+    _do_punitions_for_moderators(rcon, actions, [mod])
+    audit_action.assert_not_called()
+
+
+def test_audit_failure_does_not_stop_the_executor(scenario, monkeypatch):
+    mod = scenario[0]
+    actions = confirmed(scenario)
+
+    @contextmanager
+    def broken_session():
+        raise RuntimeError("database unavailable")
+        yield
+
+    monkeypatch.setattr(antisteamroll, "enter_session", broken_session)
+    monkeypatch.setattr("rcon.automods.automod.audit", Mock())
+    rcon = Mock()
+    _do_punitions_for_moderators(rcon, actions, [mod])
+    rcon.message_player.assert_called_once()
+
+
+def test_punish_dropped_for_another_automod_is_rolled_back(scenario):
+    mod, teams, game, clock, player = scenario
+    mod.config.number_of_warnings = 0
+
+    class SquadMod:
+        def punitions_to_apply(self, team_view, squad_name, team, squad, gamestate):
+            result = antisteamroll.PunitionsToApply()
+            if squad_name == "Able":
+                result.punish.append(
+                    antisteamroll.PunishPlayer(
+                        player_id=player["player_id"],
+                        name=player["name"],
+                        squad=squad_name,
+                        team=team,
+                        details=antisteamroll.PunishDetails(author="OtherMod"),
+                    )
+                )
+            return result
+
+    rcon = Mock()
+    rcon.get_team_view.return_value = teams
+    rcon.get_gamestate.return_value = game
+    for _ in range(2):
+        get_punitions_to_apply(rcon, [SquadMod(), mod])
+        clock[0] += 5
+    punitions = get_punitions_to_apply(rcon, [SquadMod(), mod])
+    assert [p.details.author for p in punitions.punish] == ["OtherMod"]
+    history = json.loads(mod.red.get(mod.key))["players"]["attacker"]
+    assert history["punishes"] == []
+
+
+def test_message_placeholders_distinguish_remaining_time_and_threshold(scenario):
+    mod, _, game, _, _ = scenario
+    mod.config.warning_message = "{remaining_minutes}/{attack_allowed_minutes}"
+    game["time_remaining"] = timedelta(minutes=42, seconds=30)
+    assert confirmed(scenario).warning[0].details.message == "42/30"
+
+
+def test_api_rejects_unknown_keys_but_storage_tolerates_obsolete_ones():
+    with pytest.raises(InvalidKeysConfigurationError):
+        Config.save_to_db({"enabled": True, "unexpected": True}, dry_run=True)
+    stored = Config.model_validate({"enabled": True, "removed_field": 1})
+    assert stored.enabled

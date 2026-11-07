@@ -60,9 +60,17 @@ This feature therefore reduces steamrolls, rather than guaranteeing no final cap
 | `discord_webhook_url` | null | Optional existing Automod Discord action audit |
 
 Message variables: `{player_name}`, `{team}`, `{remaining_minutes}`,
-`{received_warnings}`, `{max_warnings}`, `{received_punishes}`, `{max_punishes}`.
-`remaining_minutes` is the configured release threshold. Unsupported placeholders
-and format specifications are rejected server-side.
+`{attack_allowed_minutes}`, `{received_warnings}`, `{max_warnings}`,
+`{received_punishes}`, `{max_punishes}`. `remaining_minutes` is the current
+remaining match time (whole minutes); `attack_allowed_minutes` is the configured
+release threshold. Unsupported placeholders and format specifications are
+rejected server-side.
+
+Unknown keys are rejected when saving through the API but ignored when loading,
+so a stored configuration that still contains a removed or renamed field keeps
+its other values. A stored value that no longer validates (for instance a message
+using a removed placeholder) still makes the whole configuration fall back to the
+defaults, which disables the Automod: migrate stored values when changing them.
 
 Leaving or dying stops actions immediately and resets presence confirmation.
 Recent escalation is retained so a player killed by a punish can progress to the
@@ -80,6 +88,13 @@ including commanders and unassigned squads. It returns the existing
 `PunitionsToApply` model. The common executor handles commands, Discord audit and
 failed-punish callbacks. State is JSON in Redis, keyed by game/server and stable
 player ID; match-start/end hooks update a lifecycle marker and clear state.
+The end marker blocks enforcement on post-match data. It records the ended layer
+and remaining time, and is discarded as soon as another layer or a higher remaining
+time is observed, so a missed MATCH START log does not disable the next match.
+If that snapshot cannot be taken, the end marker expires after 15 minutes.
+Server-wide rules are merged after the squad Automods; when another Automod
+already punishes the same player in that cycle, the Anti-Steamroll punish is
+dropped and rolled back from its escalation.
 
 The UI uses the existing schema-based configuration form and its
 get/describe/validate/set endpoints. Backend validation uses Pydantic and the
@@ -93,8 +108,10 @@ groups; existing restricted accounts do not automatically receive these rights.
 The normal user-config initialization discovers the new model automatically.
 
 Proposed actions are recorded in CRCON audit logs with command
-`antisteamroll_detection`. Results are `dry_run` or `action_scheduled`: the latter
-records the decision before execution, not proof of a successful RCON command.
+`antisteamroll_detection`. Results are `dry_run` or `action_applied`, written
+after the RCON command succeeded; failed commands are retried by the executor and
+recorded once they succeed. An audit-log write failure is logged and does not stop
+the Automod loop.
 Successful live player actions also use the existing player action history.
 
 Tests use `FakeRedis`, simulated clocks and mocked command/database boundaries.
@@ -103,7 +120,7 @@ the focused suite can run without a Redis service using the project's memory-cac
 mode:
 
 ```sh
-DEBUG=1 SERVER_NUMBER=1 .venv/bin/pytest tests/test_antisteamroll_automod.py tests/test_automod_config_scope.py
+DEBUG=1 SERVER_NUMBER=1 HLL_GAME=hll uv run pytest tests/test_antisteamroll_automod.py tests/test_automod_config_scope.py
 ```
 
 The UI tests exercise the shared page's real loader and save action with simulated

@@ -35,13 +35,12 @@ def get_punitions_to_apply(rcon, moderators) -> PunitionsToApply:
     gamestate = rcon.get_gamestate()
     punitions_to_apply = PunitionsToApply()
 
-    squad_moderators = []
-    for mod in moderators:
-        server_rule = getattr(mod, "server_punitions_to_apply", None)
-        if callable(server_rule):
-            punitions_to_apply.merge(server_rule(team_view, gamestate))
-        else:
-            squad_moderators.append(mod)
+    server_moderators = [
+        mod
+        for mod in moderators
+        if callable(getattr(mod, "server_punitions_to_apply", None))
+    ]
+    squad_moderators = [mod for mod in moderators if mod not in server_moderators]
 
     for team in ["allies", "axis"]:
         if not team_view.get(team):
@@ -69,6 +68,16 @@ def get_punitions_to_apply(rcon, moderators) -> PunitionsToApply:
                     )
                 )
 
+    # Server-wide rules (fork: Anti-Steamroll) are merged last so the upstream
+    # squad automods keep their behaviour. `merge` keeps a single punish per
+    # player: a dropped punish is rolled back so its escalation is not counted.
+    for mod in server_moderators:
+        server_punitions = mod.server_punitions_to_apply(team_view, gamestate)
+        for aplayer in server_punitions.punish:
+            if any(p.player_id == aplayer.player_id for p in punitions_to_apply.punish):
+                mod.player_punish_failed(aplayer)
+        punitions_to_apply.merge(server_punitions)
+
     return punitions_to_apply
 
 
@@ -80,10 +89,6 @@ def _do_punitions(
 ):
     for aplayer in players:
         try:
-            for mod in mods:
-                audit_action = getattr(mod, "audit_action", None)
-                if callable(audit_action):
-                    audit_action(method, aplayer)
             if method == ActionMethod.MESSAGE:
                 if not aplayer.details.dry_run:
                     rcon.message_player(
@@ -128,6 +133,11 @@ def _do_punitions(
                     msg=f"---> KICKING <---: {aplayer}",
                     author=aplayer.details.author,
                 )
+            # Fork hook: lets an automod record actions that actually went through.
+            for mod in mods:
+                audit_action = getattr(mod, "audit_action", None)
+                if callable(audit_action):
+                    audit_action(method, aplayer)
         except HLLCommandFailedError:
             logger.warning(
                 "Couldn't `%s` player `%s`. Will retry.", repr(method), repr(aplayer)

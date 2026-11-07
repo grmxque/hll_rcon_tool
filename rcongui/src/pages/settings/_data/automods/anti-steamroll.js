@@ -24,7 +24,8 @@ kick_after_max_punish enables the final kick stage after kick_grace_period_secon
 dry_run records proposed actions in CRCON audit logs without sending any command.
 The Discord webhook optionally receives the existing Automod action audit.
 
-Message placeholders: {player_name}, {team}, {remaining_minutes},
+Message placeholders: {player_name}, {team}, {remaining_minutes} (current remaining
+match time), {attack_allowed_minutes} (allow_final_attack_remaining_minutes),
 {received_warnings}, {max_warnings}, {received_punishes}, {max_punishes}.
 `;
 

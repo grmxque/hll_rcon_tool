@@ -1,15 +1,33 @@
 from string import Formatter
 
-from pydantic import ConfigDict, Field, HttpUrl, field_serializer, field_validator
+from pydantic import Field, HttpUrl, field_serializer, field_validator
 
-from rcon.user_config.utils import BaseUserConfig, set_user_config
+from rcon.user_config.utils import BaseUserConfig, key_check, set_user_config
+
+MESSAGE_PLACEHOLDERS = frozenset(
+    {
+        "player_name",
+        "team",
+        "remaining_minutes",
+        "attack_allowed_minutes",
+        "received_warnings",
+        "max_warnings",
+        "received_punishes",
+        "max_punishes",
+    }
+)
 
 
 class AutoModAntiSteamrollUserConfig(BaseUserConfig):
-    """Live settings for protecting the losing team's final Warfare sector."""
+    """Live settings for protecting the losing team's final Warfare sector.
+
+    Unknown keys are ignored when loading, so a stored config that still holds a
+    removed or renamed field keeps its other values instead of failing
+    validation and silently falling back to the defaults (disabled). API writes
+    reject unknown keys in ``save_to_db``.
+    """
 
     NAME = "AutoModAntiSteamrollUserConfig"
-    model_config = ConfigDict(extra="forbid")
 
     enabled: bool = Field(default=False, title="Enable Anti-Steamroll")
     dry_run: bool = Field(
@@ -69,7 +87,7 @@ class AutoModAntiSteamrollUserConfig(BaseUserConfig):
         default=15, ge=5, title="Warning Interval (Seconds)"
     )
     warning_message: str = Field(
-        default="Anti-Steamroll: {player_name}, leave the protected final enemy sector. Final attacks are allowed with {remaining_minutes} minutes remaining.",
+        default="Anti-Steamroll: {player_name}, leave the protected final enemy sector. Final attacks are allowed with {attack_allowed_minutes} minutes remaining.",
         title="Warning Message",
     )
     number_of_punishments: int = Field(
@@ -101,22 +119,21 @@ class AutoModAntiSteamrollUserConfig(BaseUserConfig):
     @field_validator("warning_message", "punish_message", "kick_message")
     @classmethod
     def validate_message(cls, value: str) -> str:
-        allowed = {
-            "player_name",
-            "team",
-            "remaining_minutes",
-            "received_warnings",
-            "max_warnings",
-            "received_punishes",
-            "max_punishes",
-        }
         for _, name, spec, conversion in Formatter().parse(value):
-            if name is not None and (name not in allowed or spec or conversion):
+            if name is not None and (
+                name not in MESSAGE_PLACEHOLDERS or spec or conversion
+            ):
                 raise ValueError("Unsupported message placeholder or format")
         return value
 
     @staticmethod
     def save_to_db(values: dict, dry_run=False):
+        if isinstance(values, dict):
+            key_check(
+                frozenset(),
+                frozenset(AutoModAntiSteamrollUserConfig.model_fields),
+                values.keys(),
+            )
         validated = AutoModAntiSteamrollUserConfig.model_validate(values)
         if not dry_run:
             set_user_config(validated.NAME, validated)
