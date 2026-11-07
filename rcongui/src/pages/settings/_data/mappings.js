@@ -38,6 +38,11 @@ export const webhooks = [
 
 export const automods = [
   {
+    path: "/settings/automods/anti-steamroll",
+    command: "auto_mod_antisteamroll_config",
+    name: "Anti-Steamroll",
+  },
+  {
     path: "/settings/automods/level",
     command: "auto_mod_level_config",
     name: "Level Auto Mod",

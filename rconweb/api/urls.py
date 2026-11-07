@@ -111,6 +111,10 @@ endpoints: list[tuple[str, Callable]] = [
     ),
     ("describe_auto_mod_level_config", user_settings.describe_auto_mod_level_config),
     (
+        "describe_auto_mod_antisteamroll_config",
+        user_settings.describe_auto_mod_antisteamroll_config,
+    ),
+    (
         "describe_auto_mod_no_leader_config",
         user_settings.describe_auto_mod_no_leader_config,
     ),

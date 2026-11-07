@@ -224,6 +224,11 @@ export const navMenus = [
     icon: <SmartToyIcon />,
     links: [
       {
+        name: "Anti-Steamroll",
+        to: "/settings/automods/anti-steamroll",
+        icon: <SmartToyIcon />,
+      },
+      {
         name: "Level",
         to: "/settings/automods/level",
         icon: <NoStrollerIcon />,
