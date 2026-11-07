@@ -12,6 +12,7 @@ from rcon.user_config.auto_mod_solo_tank import AutoModNoSoloTankUserConfig
 from rcon.user_config.ban_tk_on_connect import BanTeamKillOnConnectUserConfig
 from rcon.user_config.camera_notification import CameraNotificationUserConfig
 from rcon.user_config.chat_commands import ChatCommandsUserConfig
+from rcon.user_config.end_of_game_rewards import EndOfGameRewardsUserConfig
 from rcon.user_config.expired_vips import ExpiredVipsUserConfig
 from rcon.user_config.log_line_webhooks import LogLineWebhookUserConfig
 from rcon.user_config.log_stream import LogStreamUserConfig
@@ -41,6 +42,7 @@ from rcon.user_config.webhooks import (
     WatchlistWebhooksUserConfig,
     get_all_hook_types,
 )
+from rcon.user_config.welcome_stats import WelcomeStatsUserConfig
 
 from .auth import api_response, login_required
 from .decorators import permission_required, require_http_methods
@@ -56,6 +58,30 @@ def describe_auto_mod_antisteamroll_config(request):
     return api_response(
         result=AutoModAntiSteamrollUserConfig.model_json_schema(),
         command="describe_auto_mod_antisteamroll_config",
+        failed=False,
+    )
+
+
+@csrf_exempt
+@login_required()
+@permission_required("api.can_view_welcome_stats_config", raise_exception=True)
+@require_http_methods(["GET"])
+def describe_welcome_stats_config(request):
+    return api_response(
+        result=WelcomeStatsUserConfig.model_json_schema(),
+        command="describe_welcome_stats_config",
+        failed=False,
+    )
+
+
+@csrf_exempt
+@login_required()
+@permission_required("api.can_view_end_of_game_rewards_config", raise_exception=True)
+@require_http_methods(["GET"])
+def describe_end_of_game_rewards_config(request):
+    return api_response(
+        result=EndOfGameRewardsUserConfig.model_json_schema(),
+        command="describe_end_of_game_rewards_config",
         failed=False,
     )
 

@@ -275,6 +275,16 @@ export const navMenus = [
         icon: <MilitaryTechIcon />,
       },
       {
+        name: "Welcome Stats",
+        to: "/settings/others/welcome-stats",
+        icon: <ScoreboardIcon />,
+      },
+      {
+        name: "End of Game Rewards",
+        to: "/settings/others/end-of-game-rewards",
+        icon: <MilitaryTechIcon />,
+      },
+      {
         name: "RCON Game Server Connection",
         to: "/settings/others/game-server",
         icon: <CableIcon />,

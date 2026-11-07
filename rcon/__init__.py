@@ -26,3 +26,7 @@ if not os.getenv("HLL_MAINTENANCE_CONTAINER") and not os.getenv(
     from rcon.discord_chat import handle_on_chat, handle_on_kill, handle_on_tk
     from rcon.recent_actions import update_kills, update_tks
     from rcon.watchlist import watchdog
+
+    # isort: split
+    # Fork modules registering log loop hooks (after the upstream ones).
+    from rcon import end_of_game_rewards, welcome_stats  # noqa: F401

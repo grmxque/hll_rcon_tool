@@ -18,6 +18,7 @@ if not os.getenv("HLL_MAINTENANCE_CONTAINER") and not os.getenv(
         ban_tk_on_connect,
         camera_notification,
         chat_commands,
+        end_of_game_rewards,
         expired_vips,
         log_line_webhooks,
         log_stream,
@@ -31,6 +32,7 @@ if not os.getenv("HLL_MAINTENANCE_CONTAINER") and not os.getenv(
         vac_game_bans,
         vote_map,
         webhooks,
+        welcome_stats,
     )
 
     __all__ = [
@@ -44,6 +46,7 @@ if not os.getenv("HLL_MAINTENANCE_CONTAINER") and not os.getenv(
         "ban_tk_on_connect",
         "camera_notification",
         "chat_commands",
+        "end_of_game_rewards",
         "expired_vips",
         "gtx_server_name",
         "log_line_webhooks",
@@ -58,4 +61,5 @@ if not os.getenv("HLL_MAINTENANCE_CONTAINER") and not os.getenv(
         "vac_game_bans",
         "vote_map",
         "webhooks",
+        "welcome_stats",
     ]

@@ -19,6 +19,10 @@ from django.db import DEFAULT_DB_ALIAS
 FORK_PERMISSIONS: tuple[tuple[str, str], ...] = (
     ("can_view_auto_mod_antisteamroll_config", "Can view Anti-Steamroll config"),
     ("can_change_auto_mod_antisteamroll_config", "Can change Anti-Steamroll config"),
+    ("can_view_welcome_stats_config", "Can view Welcome Stats config"),
+    ("can_change_welcome_stats_config", "Can change Welcome Stats config"),
+    ("can_view_end_of_game_rewards_config", "Can view End of Game Rewards config"),
+    ("can_change_end_of_game_rewards_config", "Can change End of Game Rewards config"),
 )
 
 
