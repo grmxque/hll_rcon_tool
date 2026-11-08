@@ -9,7 +9,8 @@ player, refreshed every 2 seconds.
 - Clicking a player (or picking them in the search) selects them:
   - the sidebar shows the player card with the usual player action menu (message, punish, kick, switch,
     ban…, each action keeping its own permission) and a button to centre the map on them;
-  - a panel under the map lists the player's recent game log lines, newest first, refreshed every 5 s: kills,
+  - a panel under the map lists the player's game log lines of the current match (since
+    `MapsHistory()[0]["start"]`, returned as `match_start_ms`), newest first, refreshed every 5 s: kills,
     deaths, team kills (given or received), chat, admin actions… It uses `get_recent_logs` (permission
     `can_view_recent_logs`) on the log history kept in Redis by the log loop.
 - Scroll wheel / pinch to zoom, drag to move, buttons to zoom and to show the whole map. Names and squads are

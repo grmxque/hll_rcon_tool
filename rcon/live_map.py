@@ -31,6 +31,7 @@ from rcon.utils import MapsHistory
 
 if TYPE_CHECKING:
     from rcon.rcon import Rcon
+    from rcon.types import MapInfo
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,8 @@ class LiveMap(TypedDict):
     layer: LiveMapLayer | None
     score: LiveMapScore | None
     players: list[LiveMapPlayer]
+    #: Start of the match in progress (epoch ms), used to keep only its log lines.
+    match_start_ms: int | None
 
 
 def _grid_extent(grid: hllrcon.data.layers.Grid) -> GridGeometry:
@@ -346,7 +349,9 @@ def build_live_map(
     game_layout: Sequence[Any] | None = None,
     allied_faction: str | None = None,
     axis_faction: str | None = None,
+    match_start: int | None = None,
 ) -> LiveMap:
+    """Assemble the live map. ``match_start`` is the match start in epoch seconds."""
     score = build_score(gamestate, allied_faction, axis_faction)
     return {
         "layer": build_layer(
@@ -357,22 +362,31 @@ def build_live_map(
         ),
         "score": score,
         "players": [build_player(p) for p in _team_view_players(team_view)],
+        "match_start_ms": match_start * 1000 if match_start else None,
     }
 
 
-def current_game_layout(layer_id: str) -> list[str | int] | None:
-    """Objectives CRCON set for the match in progress, if it was set through CRCON.
+def current_match() -> "MapInfo | None":
+    """The match in progress: ``MapsHistory()[0]`` while it has no end time.
 
-    ``MapsHistory()[0]`` is the current match; its layout is recorded at match start
-    from the last ``set_game_layout`` call (see ``rcon.hooks``).
+    The entry is created by the MATCH START hook (``rcon.hooks``) and closed at the
+    next match start.
     """
     try:
         current = MapsHistory()[0]
     except IndexError:
         return None
-    if str(current.get("name", "")).casefold() != layer_id.casefold():
+    return current if current.get("end") is None else None
+
+
+def game_layout_of(match: "MapInfo | None", layer_id: str) -> list[str | int] | None:
+    """Objectives CRCON set for ``match``, if it is ``layer_id`` and was set through CRCON.
+
+    The layout is recorded at match start from the last ``set_game_layout`` call.
+    """
+    if not match or str(match.get("name", "")).casefold() != layer_id.casefold():
         return None
-    return list(current.get("game_layout", {}).get("set") or []) or None
+    return list(match.get("game_layout", {}).get("set") or []) or None
 
 
 def live_map_for(rcon: "Rcon") -> LiveMap:
@@ -383,12 +397,14 @@ def live_map_for(rcon: "Rcon") -> LiveMap:
     except Exception:
         logger.exception("Live map: could not read the game state")
         gamestate = None
+    match = current_match()
     return build_live_map(
         rcon.get_team_view(),
         layer.id,
         rcon.game_profile.game,
         gamestate=gamestate,
-        game_layout=current_game_layout(layer.id),
+        game_layout=game_layout_of(match, layer.id),
         allied_faction=layer.map.allies.name,
         axis_faction=layer.map.axis.name,
+        match_start=match.get("start") if match else None,
     )

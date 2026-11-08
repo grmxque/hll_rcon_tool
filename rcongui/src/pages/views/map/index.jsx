@@ -128,7 +128,7 @@ const LiveMapPage = () => {
           </Box>
           {selectedPlayer && (
             <Box sx={{ height: LOGS_PANEL_HEIGHT, flexShrink: 0, borderTop: 1, borderColor: "divider" }}>
-              <PlayerLogs player={selectedPlayer} />
+              <PlayerLogs player={selectedPlayer} matchStartMs={data?.match_start_ms ?? null} />
             </Box>
           )}
         </Stack>

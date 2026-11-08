@@ -58,8 +58,11 @@ function summary(line, playerId) {
 const time = (timestampMs) =>
   new Date(timestampMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
-/** Recent game log lines involving one player, newest first. */
-export default function PlayerLogs({ player }) {
+/**
+ * Game log lines involving one player, newest first. With `matchStartMs` (start of the
+ * match in progress), older lines (previous matches, earlier sessions) are dropped.
+ */
+export default function PlayerLogs({ player, matchStartMs }) {
   const { data, error, isLoading } = useQuery({
     queryKey: [{ queryIdentifier: "get_recent_logs", player: player.name }],
     queryFn: () => fetchPlayerLogs(player.name),
@@ -71,12 +74,16 @@ export default function PlayerLogs({ player }) {
   // The server filters on the name; also check the id so a namesake's lines are dropped.
   const lines = (data?.logs ?? [])
     .filter((line) => !line.player_id_1 || line.player_id_1 === player.player_id || line.player_id_2 === player.player_id)
+    .filter((line) => !matchStartMs || line.timestamp_ms >= matchStartMs)
     .slice(0, SHOWN_LINES);
 
   return (
     <Stack sx={{ height: "100%", minHeight: 0 }}>
       <Typography variant="subtitle2" sx={{ px: 1.5, py: 1, borderBottom: 1, borderColor: "divider" }}>
         Game logs · {player.name}
+        <Typography component="span" variant="caption" color="text.secondary">
+          {matchStartMs ? " · current match" : " · recent"}
+        </Typography>
       </Typography>
       <Box sx={{ flexGrow: 1, overflowY: "auto", px: 1.5, py: 0.5, fontFamily: "monospace", fontSize: 13 }}>
         {error && (
@@ -88,7 +95,7 @@ export default function PlayerLogs({ player }) {
         )}
         {!error && !isLoading && lines.length === 0 && (
           <Typography variant="body2" color="text.secondary" sx={{ py: 1 }}>
-            No recent log line for this player.
+            {matchStartMs ? "No log line for this player in the current match." : "No recent log line for this player."}
           </Typography>
         )}
         {lines.map((line) => {
