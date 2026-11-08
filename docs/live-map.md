@@ -13,6 +13,8 @@ player, refreshed every 2 seconds.
     `MapsHistory()[0]["start"]`, returned as `match_start_ms`), newest first, refreshed every 5 s: kills,
     deaths, team kills (given or received), chat, admin actions… It uses `get_recent_logs` (permission
     `can_view_recent_logs`) on the log history kept in Redis by the log loop.
+- Markers glide between refreshes; a move of more than 150 m in one refresh (respawn at a garrison or OP)
+  is shown as a jump.
 - Scroll wheel / pinch to zoom, drag to move, buttons to zoom and to show the whole map. Names and squads are
   drawn from 2.5× zoom on (option in the sidebar).
 - Search a player to centre and zoom on them. Filters: show/hide a team, highlight one squad (others dimmed).
@@ -73,4 +75,6 @@ exists in the Vite dev server; production builds do not contain it.
   image is framed differently would show offset positions. Check by comparing your own position in game.
 - In Warfare the score assumes every sector is held by one team; a sector being captured keeps its previous
   colour until the score changes.
+- Garrisons, outposts and other spawn points cannot be shown: the game server exposes them neither through
+  RCON commands nor in the logs.
 - Vehicles are not shown separately: crew members appear at the vehicle's position.

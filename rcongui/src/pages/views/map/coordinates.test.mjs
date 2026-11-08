@@ -6,6 +6,7 @@ import {
   centerOn,
   fitView,
   gridGeometry,
+  isTeleport,
   relativeZoom,
   worldLengthToMap,
   worldToMap,
@@ -46,6 +47,12 @@ test("zooming keeps the point under the cursor fixed and is clamped", () => {
   assert.equal(zoomed.scale, 1.2);
   assert.ok(Math.abs(mapPointBefore - mapPointAfter) < 1e-9);
   assert.equal(relativeZoom(zoomAt(view, 1000, 0, 0, VIEWPORT), VIEWPORT), MAX_ZOOM);
+});
+
+test("respawns are teleports, walking and driving are not", () => {
+  assert.equal(isTeleport(null, { x: 10, y: 10 }, 75), true);
+  assert.equal(isTeleport({ x: 10, y: 10 }, { x: 40, y: 50 }, 75), false);
+  assert.equal(isTeleport({ x: 10, y: 10 }, { x: 900, y: 120 }, 75), true);
 });
 
 test("centering puts the point in the middle of the viewport", () => {

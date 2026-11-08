@@ -95,7 +95,13 @@ function step() {
   for (const player of players) {
     player.x += (random() - 0.5) * 900;
     player.y += (random() - 0.5) * 900;
-    if (!player.alive && random() > 0.8) player.alive = true;
+    if (!player.alive && random() > 0.8) {
+      // Respawn somewhere else on the map: the marker must jump, not glide.
+      const spawn = pick(LAYER.strongpoints);
+      player.x = spawn.x + (random() - 0.5) * 4000;
+      player.y = spawn.y + (random() - 0.5) * 4000;
+      player.alive = true;
+    }
   }
   if (random() > 0.4) {
     const killer = pick(players.filter((player) => player.alive));
