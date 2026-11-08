@@ -4,6 +4,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { cmd } from "@/utils/fetchUtils";
 import LiveMapCanvas from "./LiveMapCanvas";
 import MapSidebar, { isUnassigned } from "./MapSidebar";
+import { updateLastPositions, withDeadPositions } from "./deadPlayers";
 import PlayerLogs from "./PlayerLogs";
 import ScoreBar from "./ScoreBar";
 
@@ -62,22 +63,30 @@ const LiveMapPage = () => {
   const [visibleTeams, setVisibleTeams] = useState({ allies: true, axis: true });
   const [showNames, setShowNames] = useState(true);
   const [showUnassigned, setShowUnassigned] = useState(false);
+  const [showDead, setShowDead] = useState(true);
   const [showSectorColors, setShowSectorColors] = useState(true);
   const [showInactiveStrongpoints, setShowInactiveStrongpoints] = useState(false);
 
-  const players = useMemo(
-    () => [...(data?.players ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
-    [data],
-  );
+  // Last alive position of each player, so the dead stay on the map until they redeploy.
+  // Forgotten when a new match starts.
+  const lastPositions = useRef({ match: null, positions: new Map() });
+  const players = useMemo(() => {
+    const raw = data?.players ?? [];
+    const match = `${data?.match_start_ms}:${data?.layer?.map_id}`;
+    const previous = lastPositions.current.match === match ? lastPositions.current.positions : new Map();
+    const positions = updateLastPositions(previous, raw);
+    lastPositions.current = { match, positions };
+    return withDeadPositions(raw, positions).sort((a, b) => a.name.localeCompare(b.name));
+  }, [data]);
   const mapPlayers = useMemo(
     () =>
       players.filter(
         (player) =>
-          player.alive &&
+          (player.alive || (showDead && player.dead)) &&
           visibleTeams[player.team] !== false &&
           (showUnassigned || !isUnassigned(player)),
       ),
-    [players, visibleTeams, showUnassigned],
+    [players, visibleTeams, showUnassigned, showDead],
   );
   const squads = useMemo(() => squadsOf(players), [players]);
   const selectedPlayer = players.find((player) => player.player_id === selectedId) ?? null;
@@ -85,13 +94,14 @@ const LiveMapPage = () => {
   const onSearch = useCallback(
     (player) => {
       setSelectedId(player?.player_id ?? null);
-      if (!player?.alive || (!showUnassigned && isUnassigned(player))) return;
+      const onMap = player?.alive || (showDead && player?.dead);
+      if (!onMap || (!showUnassigned && isUnassigned(player))) return;
       if (visibleTeams[player.team] === false) {
         setVisibleTeams((teams) => ({ ...teams, [player.team]: true }));
       }
       canvasRef.current?.focusPlayer(player.player_id);
     },
-    [visibleTeams, showUnassigned],
+    [visibleTeams, showUnassigned, showDead],
   );
 
   return (
@@ -167,6 +177,8 @@ const LiveMapPage = () => {
               onShowNames={setShowNames}
               showUnassigned={showUnassigned}
               onShowUnassigned={setShowUnassigned}
+              showDead={showDead}
+              onShowDead={setShowDead}
               layer={data?.layer ?? null}
               showSectorColors={showSectorColors}
               onShowSectorColors={setShowSectorColors}

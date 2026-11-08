@@ -20,6 +20,8 @@ player, refreshed every 2 seconds.
 - Search a player to centre and zoom on them. Filters: show/hide a team, highlight one squad (others dimmed).
 - Players without a squad ("unassigned", or in the lobby) are hidden from the map by default (option
   "Show players without a squad"); they stay in the search.
+- Dead players stay greyed where they died until they spawn again (option "Show dead players where they
+  died"). A revive nearby glides, a respawn elsewhere jumps.
 - The current layer's grid (letters / numbers) and strongpoints are drawn over the image.
 - Warfare / Offensive: each sector is coloured by the team holding it, derived from the score (option
   "Colour sectors by owner" to turn it off). The active strongpoint of each sector is drawn solid; the two
@@ -50,8 +52,10 @@ so only give it to trusted admins.
   all 15 strongpoints are drawn dashed and the sidebar says the objectives are unknown. Setting the layout from
   CRCON before each match (even with "random" rows, CRCON then draws them itself) makes them known.
 - World axes: `x` towards the east, `y` towards the south (game centimetres), mapped directly onto image pixels.
-- A position of exactly (0, 0, 0) is treated as dead / on the deployment screen: the player is listed in the
-  search but not drawn.
+- A position of exactly (0, 0, 0) is treated as dead / on the deployment screen (`alive: false`). The server
+  does not keep the death location: the page remembers each player's last alive position in the browser
+  (`deadPlayers.js`) and draws dead players there. It is forgotten when they spawn again, switch team, leave,
+  or a new match starts. A player who died before the page was opened has no known position and is not drawn.
 
 If hllrcon does not know the current layer, the page shows a message and no map.
 
@@ -60,8 +64,8 @@ If hllrcon does not know the current layer, the page shows a message and no map.
 - Backend: `rcon/live_map.py` (pure builders + `live_map_for(rcon)`, tests in `tests/test_live_map.py`) and
   `RconAPI.get_live_map`.
 - Frontend: `rcongui/src/pages/views/map/` — `LiveMapCanvas.jsx` (SVG with pan/zoom, no map library), `PlayerLogs.jsx`, `ScoreBar.jsx`,
-  `MapSidebar.jsx`, and `coordinates.js` (world → image → screen conversions, tested by
-  `node --test src/pages/views/map/coordinates.test.mjs`).
+  `MapSidebar.jsx`, `coordinates.js` (world → image → screen conversions) and `deadPlayers.js` (last known
+  positions), tested by `node --test src/pages/views/map/coordinates.test.mjs src/pages/views/map/deadPlayers.test.mjs`.
 
 ## Previewing without a game server
 
