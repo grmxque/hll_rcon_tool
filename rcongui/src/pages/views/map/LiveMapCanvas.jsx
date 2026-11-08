@@ -40,8 +40,11 @@ const PlayerTooltip = ({ player }) => (
     <Typography variant="body2">
       Level {player.level} · {player.kills} K / {player.deaths} D
     </Typography>
+    {player.dead && <Typography variant="body2">Dead · last known position</Typography>}
   </Box>
 );
+
+const DEAD_COLOR = "#6b7280";
 
 const PlayerMarker = memo(function PlayerMarker({
   player,
@@ -55,7 +58,8 @@ const PlayerMarker = memo(function PlayerMarker({
 }) {
   const radius = (selected ? 10 : 7) / scale;
   const icon = 10 / scale;
-  const color = TEAM_COLORS[player.team] ?? TEAM_COLORS.unassigned;
+  // Dead players stay where they died, greyed out, until they redeploy.
+  const color = player.dead ? DEAD_COLOR : (TEAM_COLORS[player.team] ?? TEAM_COLORS.unassigned);
   const previousPosition = useRef(null);
   const jumped = isTeleport(previousPosition.current, position, maxGlide);
   useEffect(() => {
@@ -67,7 +71,7 @@ const PlayerMarker = memo(function PlayerMarker({
       style={{
         transform: `translate(${position.x}px, ${position.y}px)`,
         transition: jumped ? "none" : MOVE_TRANSITION,
-        opacity: dimmed ? 0.25 : 1,
+        opacity: (dimmed ? 0.25 : 1) * (player.dead ? 0.6 : 1),
         cursor: "pointer",
       }}
       onClick={(event) => {

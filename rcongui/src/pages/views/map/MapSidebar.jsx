@@ -26,8 +26,23 @@ export const isUnassigned = (player) =>
 
 const squadKey = (squad) => (squad ? `${squad.team}:${squad.unit_name}` : "");
 
-const SelectedPlayer = ({ player, onFocus, showUnassigned }) => (
-  <Paper variant="outlined" sx={{ p: 1.5 }}>
+/** Why the selected player is not drawn (or drawn greyed), or null when shown normally. */
+function mapStatus(player, { showUnassigned, showDead }) {
+  if (!player.alive && !player.dead) {
+    return "Dead or on the deployment screen, no known position: not shown on the map.";
+  }
+  if (player.dead && !showDead) return "Dead: hidden from the map.";
+  if (isUnassigned(player) && !showUnassigned) return "Not in a squad: hidden from the map.";
+  if (player.dead) return "Dead: shown greyed where they died until they redeploy.";
+  return null;
+}
+
+const SelectedPlayer = ({ player, onFocus, showUnassigned, showDead }) => {
+  const onMap = (player.alive || (showDead && player.dead)) && (showUnassigned || !isUnassigned(player));
+  const status = mapStatus(player, { showUnassigned, showDead });
+
+  return (
+    <Paper variant="outlined" sx={{ p: 1.5 }}>
       <Stack direction="row" alignItems="center" spacing={1}>
         <Box
           sx={{
@@ -41,7 +56,7 @@ const SelectedPlayer = ({ player, onFocus, showUnassigned }) => (
         <Typography variant="subtitle1" noWrap sx={{ flexGrow: 1 }}>
           {player.name}
         </Typography>
-        {player.alive && (showUnassigned || !isUnassigned(player)) && (
+        {onMap && (
           <Tooltip title="Centre the map on this player">
             <IconButton size="small" onClick={() => onFocus(player)}>
               <MyLocationIcon fontSize="small" />
@@ -59,18 +74,14 @@ const SelectedPlayer = ({ player, onFocus, showUnassigned }) => (
       <Typography variant="body2" color="text.secondary">
         Level {player.level} · {player.kills} K / {player.deaths} D
       </Typography>
-      {!player.alive && (
-        <Typography variant="body2" color="warning.main">
-          Dead or on the deployment screen: not shown on the map.
-        </Typography>
-      )}
-      {player.alive && isUnassigned(player) && !showUnassigned && (
-        <Typography variant="body2" color="warning.main">
-          Not in a squad: hidden from the map.
+      {status && (
+        <Typography variant="body2" color={player.alive ? "warning.main" : "text.secondary"}>
+          {status}
         </Typography>
       )}
     </Paper>
-);
+  );
+};
 
 /** Search, filters and details of the selected player. */
 export default function MapSidebar({
@@ -87,6 +98,8 @@ export default function MapSidebar({
   onShowNames,
   showUnassigned,
   onShowUnassigned,
+  showDead,
+  onShowDead,
   layer,
   showSectorColors,
   onShowSectorColors,
@@ -94,9 +107,11 @@ export default function MapSidebar({
   onShowInactiveStrongpoints,
 }) {
   const hasFrontLine = layer?.sectors?.length === 5;
+  const inSquadFilter = (player) => showUnassigned || !isUnassigned(player);
   const aliveCount = players.filter((player) => player.alive).length;
+  const aliveOnMap = players.filter((player) => player.alive && inSquadFilter(player)).length;
+  const deadOnMap = showDead ? players.filter((player) => player.dead && inSquadFilter(player)).length : 0;
   const unassignedCount = players.filter((player) => player.alive && isUnassigned(player)).length;
-  const onMapCount = showUnassigned ? aliveCount : aliveCount - unassignedCount;
 
   return (
     <Stack spacing={2} sx={{ p: 2, height: "100%", overflowY: "auto" }}>
@@ -111,6 +126,7 @@ export default function MapSidebar({
         renderOption={({ key, ...props }, player) => (
           <li key={player.player_id} {...props}>
             <Box sx={{ opacity: player.alive ? 1 : 0.5 }}>
+              {player.dead ? "✝ " : ""}
               {player.name}
               <Typography component="span" variant="caption" color="text.secondary">
                 {" "}
@@ -122,7 +138,14 @@ export default function MapSidebar({
         renderInput={(params) => <TextField {...params} label="Find a player" />}
       />
 
-      {selectedPlayer && <SelectedPlayer player={selectedPlayer} onFocus={onFocus} showUnassigned={showUnassigned} />}
+      {selectedPlayer && (
+        <SelectedPlayer
+          player={selectedPlayer}
+          onFocus={onFocus}
+          showUnassigned={showUnassigned}
+          showDead={showDead}
+        />
+      )}
 
       <Divider />
 
@@ -169,6 +192,10 @@ export default function MapSidebar({
           label="Show players without a squad"
         />
         <FormControlLabel
+          control={<Checkbox size="small" checked={showDead} onChange={(e) => onShowDead(e.target.checked)} />}
+          label="Show dead players where they died"
+        />
+        <FormControlLabel
           control={
             <Checkbox size="small" checked={showSectorColors} onChange={(e) => onShowSectorColors(e.target.checked)} />
           }
@@ -189,7 +216,8 @@ export default function MapSidebar({
       </Box>
 
       <Typography variant="body2" color="text.secondary">
-        {onMapCount} on the map · {players.length - aliveCount} dead or deploying
+        {aliveOnMap} alive on the map · {players.length - aliveCount} dead or deploying
+        {deadOnMap > 0 ? ` (${deadOnMap} shown greyed)` : ""}
         {!showUnassigned && unassignedCount > 0 ? ` · ${unassignedCount} without a squad (hidden)` : ""}
       </Typography>
       {hasFrontLine && !layer.objectives_known && (
