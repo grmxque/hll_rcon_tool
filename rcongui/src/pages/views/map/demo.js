@@ -85,6 +85,8 @@ for (const [team, strongpoints] of [
     }
   }
 }
+// A few players without a squad, hidden by default on the map.
+for (const index of [5, 40]) players[index].unit_name = "unassigned";
 players.push({ ...players[0], player_id: "76561198000009999", name: "Commander", unit_name: "command", role: "armycommander" });
 
 const logs = [];
