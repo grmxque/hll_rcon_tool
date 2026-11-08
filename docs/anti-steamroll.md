@@ -61,13 +61,14 @@ This feature therefore reduces steamrolls, rather than guaranteeing no final cap
 ## Announcements
 
 When protection starts (each time the score becomes 4-1 above the remaining-time
-threshold), each team receives its message through pipelined `MessagePlayer`
-commands. When the threshold is then reached while the score is still 4-1, the
+threshold), each team receives its message as one `MessagePlayer` command per
+player, sent one after the other (game servers can close the connection during a
+pipelined burst). When the threshold is then reached while the score is still 4-1, the
 lifted message goes to everyone (`MessageAllPlayers`). A protection is announced
 once: a reset of the enforcement state (configuration change, slow cycle) does
-not repeat it, while a recapture followed by a new 4-1 is announced again. A failed
-send is logged and retried on the next cycle; if one team's message was delivered
-before the failure, that team receives it again. Each announcement is recorded in
+not repeat it, while a recapture followed by a new 4-1 is announced again. A player
+who cannot be messaged is logged and skipped. The announcement is retried on the
+next cycle only when no player at all received it, so nobody gets it twice. Each announcement is recorded in
 the audit log (`antisteamroll_announcement`) and posted to the Discord webhook.
 
 Announcement variables: `{remaining_minutes}`, `{attack_allowed_minutes}`.

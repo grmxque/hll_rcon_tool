@@ -691,6 +691,13 @@ def announcer(scenario, **config):
     return mod, teams, game, rcon, defender
 
 
+def sent_messages(rcon):
+    return [
+        (c.kwargs["player_id"], c.kwargs["message"])
+        for c in rcon.message_player.call_args_list
+    ]
+
+
 def test_start_announcement_targets_each_team_once(scenario):
     mod, teams, game, rcon, _ = announcer(
         scenario,
@@ -699,19 +706,14 @@ def test_start_announcement_targets_each_team_once(scenario):
     )
     for _ in range(3):
         mod.server_punitions_to_apply(teams, game, rcon=rcon)
-    assert rcon.bulk_message_players.call_args_list == [
-        ((["attacker"], ["win 45"]),),
-        ((["defender"], ["lose 60"]),),
-    ]
+    assert sent_messages(rcon) == [("attacker", "win 45"), ("defender", "lose 60")]
     rcon.message_all_players.assert_not_called()
 
 
 def test_empty_announcement_is_not_sent(scenario):
     mod, teams, game, rcon, _ = announcer(scenario, losing_team_message=" ")
     mod.server_punitions_to_apply(teams, game, rcon=rcon)
-    assert [c.args[0] for c in rcon.bulk_message_players.call_args_list] == [
-        ["attacker"]
-    ]
+    assert [player_id for player_id, _ in sent_messages(rcon)] == ["attacker"]
 
 
 def test_new_four_one_after_recapture_is_announced_again(scenario):
@@ -721,7 +723,7 @@ def test_new_four_one_after_recapture_is_announced_again(scenario):
     mod.server_punitions_to_apply(teams, game, rcon=rcon)
     game.update(axis_score=4, allied_score=1)
     mod.server_punitions_to_apply(teams, game, rcon=rcon)
-    assert rcon.bulk_message_players.call_count == 4
+    assert rcon.message_player.call_count == 4
 
 
 def test_tracking_reset_does_not_repeat_the_announcement(scenario):
@@ -729,7 +731,7 @@ def test_tracking_reset_does_not_repeat_the_announcement(scenario):
     mod.server_punitions_to_apply(teams, game, rcon=rcon)
     mod.config.warning_message = "Changed {player_name}"
     mod.server_punitions_to_apply(teams, game, rcon=rcon)
-    assert rcon.bulk_message_players.call_count == 2
+    assert rcon.message_player.call_count == 2
 
 
 def test_lifted_announcement_once_after_a_protection(scenario):
@@ -747,7 +749,7 @@ def test_no_lifted_announcement_without_a_running_protection(scenario):
     mod, teams, game, rcon, _ = announcer(scenario)
     game["time_remaining"] = timedelta(minutes=40)
     mod.server_punitions_to_apply(teams, game, rcon=rcon)
-    rcon.bulk_message_players.assert_not_called()
+    rcon.message_player.assert_not_called()
     rcon.message_all_players.assert_not_called()
 
 
@@ -762,19 +764,38 @@ def test_dry_run_announcements_are_audited_but_not_sent(scenario, monkeypatch):
     monkeypatch.setattr(antisteamroll, "enter_session", fake_session)
     mod.server_punitions_to_apply(teams, game, rcon=rcon)
     mod.server_punitions_to_apply(teams, game, rcon=rcon)
-    rcon.bulk_message_players.assert_not_called()
+    rcon.message_player.assert_not_called()
     entry = session.add.call_args.args[0]
     assert entry.command == "antisteamroll_announcement"
     assert entry.command_result == "dry_run"
     assert session.add.call_count == 1
 
 
-def test_failed_announcement_is_retried(scenario):
+def test_announcement_reaching_no_one_is_retried(scenario):
     mod, teams, game, rcon, _ = announcer(scenario)
-    rcon.bulk_message_players.side_effect = [HLLCommandFailedError("down"), True, True]
+    rcon.message_player.side_effect = [
+        HLLCommandFailedError("down"),
+        HLLCommandFailedError("down"),
+        True,
+        True,
+    ]
     mod.server_punitions_to_apply(teams, game, rcon=rcon)
     mod.server_punitions_to_apply(teams, game, rcon=rcon)
-    assert rcon.bulk_message_players.call_count == 3
+    mod.server_punitions_to_apply(teams, game, rcon=rcon)
+    assert rcon.message_player.call_count == 4
+
+
+def test_one_failed_recipient_does_not_block_or_repeat_the_announcement(scenario):
+    # The game server closing the connection mid-batch used to fail the whole
+    # announcement and resend it every cycle.
+    mod, teams, game, rcon, _ = announcer(scenario)
+    rcon.message_player.side_effect = [HLLCommandFailedError("closed"), True]
+    for _ in range(3):
+        mod.server_punitions_to_apply(teams, game, rcon=rcon)
+    assert [player_id for player_id, _ in sent_messages(rcon)] == [
+        "attacker",
+        "defender",
+    ]
 
 
 def test_announcement_goes_to_discord_when_configured(scenario, monkeypatch):
@@ -796,4 +817,4 @@ def test_executor_passes_rcon_for_announcements(scenario):
     rcon.get_team_view.return_value = teams
     rcon.get_gamestate.return_value = game
     get_punitions_to_apply(rcon, [mod])
-    assert rcon.bulk_message_players.call_count == 2
+    assert rcon.message_player.call_count == 2
