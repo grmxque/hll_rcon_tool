@@ -10,6 +10,7 @@ import LiveView from "./pages/views/live";
 import { loader as liveViewLoader } from "./pages/views/live"
 
 import TeamView from "./pages/views/team";
+import LiveMapView from "./pages/views/map";
 
 import PlayerRecords from "./pages/records/players"
 import { loader as playerRecordsLoader } from "./pages/records/players"
@@ -150,7 +151,8 @@ const router = createBrowserRouter([
                         handle: { crumb: () => <Link to={'/views/team'}>Team</Link> },
                         element: <TeamView />,
                         errorElement: <RouteError />,
-                    }
+                    },
+                    { path: 'map', handle: { crumb: () => <Link to={'/views/map'}>Map</Link> }, element: <LiveMapView />, errorElement: <RouteError /> },
                 ]
             },
             {
