@@ -62,6 +62,7 @@ const LiveMapPage = () => {
   const [highlightSquad, setHighlightSquad] = useState(null);
   const [visibleTeams, setVisibleTeams] = useState({ allies: true, axis: true });
   const [showNames, setShowNames] = useState(true);
+  const [showSquadNames, setShowSquadNames] = useState(false);
   const [showUnassigned, setShowUnassigned] = useState(false);
   const [showDead, setShowDead] = useState(true);
   const [showSectorColors, setShowSectorColors] = useState(true);
@@ -138,6 +139,7 @@ const LiveMapPage = () => {
               selectedId={selectedId}
               highlightSquad={highlightSquad}
               showNames={showNames}
+              showSquadNames={showSquadNames}
               showSectorColors={showSectorColors}
               showInactiveStrongpoints={showInactiveStrongpoints}
               onSelect={setSelectedId}
@@ -175,6 +177,8 @@ const LiveMapPage = () => {
               onToggleTeam={(team) => setVisibleTeams((teams) => ({ ...teams, [team]: !teams[team] }))}
               showNames={showNames}
               onShowNames={setShowNames}
+              showSquadNames={showSquadNames}
+              onShowSquadNames={setShowSquadNames}
               showUnassigned={showUnassigned}
               onShowUnassigned={setShowUnassigned}
               showDead={showDead}

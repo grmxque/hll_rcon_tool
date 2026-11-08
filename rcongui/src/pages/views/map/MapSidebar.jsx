@@ -96,6 +96,8 @@ export default function MapSidebar({
   onToggleTeam,
   showNames,
   onShowNames,
+  showSquadNames,
+  onShowSquadNames,
   showUnassigned,
   onShowUnassigned,
   showDead,
@@ -184,6 +186,17 @@ export default function MapSidebar({
         <FormControlLabel
           control={<Checkbox size="small" checked={showNames} onChange={(e) => onShowNames(e.target.checked)} />}
           label="Show names when zoomed in"
+        />
+        <FormControlLabel
+          control={
+            <Checkbox
+              size="small"
+              checked={showSquadNames}
+              disabled={!showNames}
+              onChange={(e) => onShowSquadNames(e.target.checked)}
+            />
+          }
+          label="Show squad letter before names"
         />
         <FormControlLabel
           control={
