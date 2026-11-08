@@ -87,6 +87,15 @@ export function centerOn(view, point, viewport, minZoom = 4) {
   };
 }
 
+/**
+ * Whether moving from `previous` to `next` (map units) is a jump rather than a walk or
+ * drive, e.g. a respawn: such moves must not be animated across the map.
+ */
+export function isTeleport(previous, next, maxStep) {
+  if (!previous) return true;
+  return Math.hypot(next.x - previous.x, next.y - previous.y) > maxStep;
+}
+
 /** Zoom level relative to the fit scale (1 = whole map visible). */
 export function relativeZoom(view, viewport) {
   return view.scale / fitView(viewport).scale;

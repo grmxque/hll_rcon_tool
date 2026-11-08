@@ -8,6 +8,7 @@ import {
   centerOn,
   fitView,
   gridGeometry,
+  isTeleport,
   relativeZoom,
   worldLengthToMap,
   worldToMap,
@@ -26,6 +27,9 @@ const BUTTON_ZOOM_FACTOR = 1.5;
 const WHEEL_ZOOM_FACTOR = 1.2;
 // Slightly shorter than the 2 s refresh so markers glide from one position to the next.
 const MOVE_TRANSITION = "transform 1.8s linear";
+// Farther than this between two refreshes is a respawn/teleport (a fast vehicle covers ~50 m in 2 s):
+// the marker jumps instead of gliding from the HQ to the actual spawn point.
+const MAX_GLIDE_DISTANCE_CM = 15000;
 
 const PlayerTooltip = ({ player }) => (
   <Box>
@@ -42,6 +46,7 @@ const PlayerTooltip = ({ player }) => (
 const PlayerMarker = memo(function PlayerMarker({
   player,
   position,
+  maxGlide,
   scale,
   showLabel,
   selected,
@@ -51,12 +56,17 @@ const PlayerMarker = memo(function PlayerMarker({
   const radius = (selected ? 10 : 7) / scale;
   const icon = 10 / scale;
   const color = TEAM_COLORS[player.team] ?? TEAM_COLORS.unassigned;
+  const previousPosition = useRef(null);
+  const jumped = isTeleport(previousPosition.current, position, maxGlide);
+  useEffect(() => {
+    previousPosition.current = position;
+  }, [position]);
 
   return (
     <g
       style={{
         transform: `translate(${position.x}px, ${position.y}px)`,
-        transition: MOVE_TRANSITION,
+        transition: jumped ? "none" : MOVE_TRANSITION,
         opacity: dimmed ? 0.25 : 1,
         cursor: "pointer",
       }}
@@ -413,6 +423,7 @@ const LiveMapCanvas = forwardRef(function LiveMapCanvas(
               key={player.player_id}
               player={player}
               position={positions.get(player.player_id)}
+              maxGlide={worldLengthToMap(layer.image_extent, MAX_GLIDE_DISTANCE_CM)}
               scale={view.scale}
               showLabel={showNames && zoom >= LABEL_ZOOM}
               selected={player.player_id === selectedId}
