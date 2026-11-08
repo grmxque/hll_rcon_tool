@@ -16,6 +16,8 @@ player, refreshed every 2 seconds.
 - Scroll wheel / pinch to zoom, drag to move, buttons to zoom and to show the whole map. Names and squads are
   drawn from 2.5× zoom on (option in the sidebar).
 - Search a player to centre and zoom on them. Filters: show/hide a team, highlight one squad (others dimmed).
+- Players without a squad ("unassigned", or in the lobby) are hidden from the map by default (option
+  "Show players without a squad"); they stay in the search.
 - The current layer's grid (letters / numbers) and strongpoints are drawn over the image.
 - Warfare / Offensive: each sector is coloured by the team holding it, derived from the score (option
   "Colour sectors by owner" to turn it off). The active strongpoint of each sector is drawn solid; the two

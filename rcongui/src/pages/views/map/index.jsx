@@ -3,7 +3,7 @@ import { Alert, Box, LinearProgress, Paper, Stack, Typography } from "@mui/mater
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { cmd } from "@/utils/fetchUtils";
 import LiveMapCanvas from "./LiveMapCanvas";
-import MapSidebar from "./MapSidebar";
+import MapSidebar, { isUnassigned } from "./MapSidebar";
 import PlayerLogs from "./PlayerLogs";
 import ScoreBar from "./ScoreBar";
 
@@ -61,6 +61,7 @@ const LiveMapPage = () => {
   const [highlightSquad, setHighlightSquad] = useState(null);
   const [visibleTeams, setVisibleTeams] = useState({ allies: true, axis: true });
   const [showNames, setShowNames] = useState(true);
+  const [showUnassigned, setShowUnassigned] = useState(false);
   const [showSectorColors, setShowSectorColors] = useState(true);
   const [showInactiveStrongpoints, setShowInactiveStrongpoints] = useState(false);
 
@@ -69,8 +70,14 @@ const LiveMapPage = () => {
     [data],
   );
   const mapPlayers = useMemo(
-    () => players.filter((player) => player.alive && visibleTeams[player.team] !== false),
-    [players, visibleTeams],
+    () =>
+      players.filter(
+        (player) =>
+          player.alive &&
+          visibleTeams[player.team] !== false &&
+          (showUnassigned || !isUnassigned(player)),
+      ),
+    [players, visibleTeams, showUnassigned],
   );
   const squads = useMemo(() => squadsOf(players), [players]);
   const selectedPlayer = players.find((player) => player.player_id === selectedId) ?? null;
@@ -78,13 +85,13 @@ const LiveMapPage = () => {
   const onSearch = useCallback(
     (player) => {
       setSelectedId(player?.player_id ?? null);
-      if (!player?.alive) return;
+      if (!player?.alive || (!showUnassigned && isUnassigned(player))) return;
       if (visibleTeams[player.team] === false) {
         setVisibleTeams((teams) => ({ ...teams, [player.team]: true }));
       }
       canvasRef.current?.focusPlayer(player.player_id);
     },
-    [visibleTeams],
+    [visibleTeams, showUnassigned],
   );
 
   return (
@@ -158,6 +165,8 @@ const LiveMapPage = () => {
               onToggleTeam={(team) => setVisibleTeams((teams) => ({ ...teams, [team]: !teams[team] }))}
               showNames={showNames}
               onShowNames={setShowNames}
+              showUnassigned={showUnassigned}
+              onShowUnassigned={setShowUnassigned}
               layer={data?.layer ?? null}
               showSectorColors={showSectorColors}
               onShowSectorColors={setShowSectorColors}
