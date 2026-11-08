@@ -15,9 +15,11 @@ player, refreshed every 2 seconds.
     `can_view_recent_logs`) on the log history kept in Redis by the log loop.
 - Markers glide between refreshes; a move of more than 150 m in one refresh (respawn at a garrison or OP)
   is shown as a jump.
-- Scroll wheel / pinch to zoom, drag to move, buttons to zoom and to show the whole map. Names and squads are
-  drawn from 2.5× zoom on (option in the sidebar).
-- Search a player to centre and zoom on them. Filters: show/hide a team, highlight one squad (others dimmed).
+- Scroll wheel / pinch to zoom, drag to move, buttons to zoom and to show the whole map. Names are drawn from
+  2.5× zoom on (option in the sidebar). The option "Show squad letter before names" (off by default) prefixes
+  them with the squad initial, e.g. `A · grmxque` for Able (`CMD` for the commander).
+- Search a player to centre and zoom on them. Filters: show/hide a team, highlight one squad (its players are
+  drawn in orange, above the others).
 - Players without a squad ("unassigned", or in the lobby) are hidden from the map by default (option
   "Show players without a squad"); they stay in the search.
 - Dead players stay greyed where they died until they spawn again (option "Show dead players where they

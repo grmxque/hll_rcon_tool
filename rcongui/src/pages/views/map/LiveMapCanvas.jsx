@@ -14,6 +14,7 @@ import {
   worldToMap,
   zoomAt,
 } from "./coordinates";
+import { playerLabel } from "./playerLabel";
 
 export const TEAM_COLORS = {
   allies: "#3b82f6",
@@ -45,6 +46,8 @@ const PlayerTooltip = ({ player }) => (
 );
 
 const DEAD_COLOR = "#6b7280";
+// Players of the squad picked in "Highlight a squad"; other players keep their team colour.
+const HIGHLIGHT_COLOR = "#f97316";
 
 const PlayerMarker = memo(function PlayerMarker({
   player,
@@ -52,14 +55,19 @@ const PlayerMarker = memo(function PlayerMarker({
   maxGlide,
   scale,
   showLabel,
+  showSquad,
   selected,
-  dimmed,
+  highlighted,
   onSelect,
 }) {
   const radius = (selected ? 10 : 7) / scale;
   const icon = 10 / scale;
   // Dead players stay where they died, greyed out, until they redeploy.
-  const color = player.dead ? DEAD_COLOR : (TEAM_COLORS[player.team] ?? TEAM_COLORS.unassigned);
+  const color = player.dead
+    ? DEAD_COLOR
+    : highlighted
+      ? HIGHLIGHT_COLOR
+      : (TEAM_COLORS[player.team] ?? TEAM_COLORS.unassigned);
   const previousPosition = useRef(null);
   const jumped = isTeleport(previousPosition.current, position, maxGlide);
   useEffect(() => {
@@ -71,7 +79,7 @@ const PlayerMarker = memo(function PlayerMarker({
       style={{
         transform: `translate(${position.x}px, ${position.y}px)`,
         transition: jumped ? "none" : MOVE_TRANSITION,
-        opacity: (dimmed ? 0.25 : 1) * (player.dead ? 0.6 : 1),
+        opacity: player.dead ? 0.6 : 1,
         cursor: "pointer",
       }}
       onClick={(event) => {
@@ -108,13 +116,19 @@ const PlayerMarker = memo(function PlayerMarker({
           paintOrder="stroke"
           pointerEvents="none"
         >
-          {player.name}
-          {player.unit_name && player.unit_name !== "unassigned" ? ` · ${player.unit_name}` : ""}
+          {playerLabel(player, showSquad)}
         </text>
       )}
     </g>
   );
 });
+
+const inSquad = (player, squad) =>
+  Boolean(squad) && player.team === squad.team && player.unit_name === squad.unit_name;
+
+/** Highlighted squad last, so its markers are drawn above the others. */
+const drawOrder = (players, squad) =>
+  squad ? [...players.filter((p) => !inSquad(p, squad)), ...players.filter((p) => inSquad(p, squad))] : players;
 
 const Grid = ({ geometry, scale }) => {
   const { bounds, columns, rows } = geometry;
@@ -241,6 +255,7 @@ const LiveMapCanvas = forwardRef(function LiveMapCanvas(
     selectedId,
     highlightSquad,
     showNames,
+    showSquadNames,
     showSectorColors,
     showInactiveStrongpoints,
     onSelect,
@@ -422,7 +437,7 @@ const LiveMapCanvas = forwardRef(function LiveMapCanvas(
               colorByOwner={showSectorColors}
             />
           )}
-          {layer && players.map((player) => (
+          {layer && drawOrder(players, highlightSquad).map((player) => (
             <PlayerMarker
               key={player.player_id}
               player={player}
@@ -430,11 +445,9 @@ const LiveMapCanvas = forwardRef(function LiveMapCanvas(
               maxGlide={worldLengthToMap(layer.image_extent, MAX_GLIDE_DISTANCE_CM)}
               scale={view.scale}
               showLabel={showNames && zoom >= LABEL_ZOOM}
+              showSquad={showSquadNames}
               selected={player.player_id === selectedId}
-              dimmed={
-                highlightSquad &&
-                !(player.team === highlightSquad.team && player.unit_name === highlightSquad.unit_name)
-              }
+              highlighted={inSquad(player, highlightSquad)}
               onSelect={onSelect}
             />
           ))}
