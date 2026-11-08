@@ -191,9 +191,12 @@ def test_process_messages_connected_players_and_grants_vip(stats, rcon, audit):
     cfg = config(discord_webhook_url="https://discord.com/api/webhooks/x")
     process_end_of_game(rcon, cfg, stats, now=NOW)
 
-    ids, messages = rcon.bulk_message_players.call_args.args
-    assert ids == ["alice", "bob"]  # carol is not connected
-    assert "YOU WON 4 DAYS OF VIP!" in messages[0]
+    calls = rcon.message_player.call_args_list
+    assert [c.kwargs["player_id"] for c in calls] == [
+        "alice",
+        "bob",
+    ]  # carol is offline
+    assert "YOU WON 4 DAYS OF VIP!" in calls[0].kwargs["message"]
 
     grants = {c.args[0]: c.args for c in rcon.add_vip.call_args_list}
     assert grants["alice"] == (
@@ -212,15 +215,25 @@ def test_process_messages_connected_players_and_grants_vip(stats, rcon, audit):
 def test_dry_run_sends_nothing(stats, rcon, audit):
     session, _ = audit
     process_end_of_game(rcon, config(dry_run=True), stats, now=NOW)
-    rcon.bulk_message_players.assert_not_called()
+    rcon.message_player.assert_not_called()
     rcon.add_vip.assert_not_called()
     assert session.add.call_args.args[0].command_result == "dry_run"
 
 
 def test_stats_message_can_be_disabled(stats, rcon, audit):
     process_end_of_game(rcon, config(send_stats_message=False), stats, now=NOW)
-    rcon.bulk_message_players.assert_not_called()
+    rcon.message_player.assert_not_called()
     assert rcon.add_vip.called
+
+
+def test_one_failed_message_does_not_stop_the_others(stats, rcon, audit):
+    rcon.message_player.side_effect = [Exception("connection closed"), True]
+    process_end_of_game(rcon, config(), stats, now=NOW)
+    assert [c.kwargs["player_id"] for c in rcon.message_player.call_args_list] == [
+        "alice",
+        "bob",
+    ]
+    assert rcon.add_vip.call_count == 3
 
 
 def test_one_failed_vip_grant_does_not_stop_the_others(stats, rcon, audit):

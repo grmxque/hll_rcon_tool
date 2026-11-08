@@ -13,6 +13,7 @@ from rcon.cache_utils import get_redis_client
 from rcon.discord import send_to_discord_audit
 from rcon.logs.loop import on_match_end
 from rcon.models import AuditLog, enter_session
+from rcon.player_messages import message_players
 from rcon.player_stats import get_cached_live_game_stats
 from rcon.rcon import Rcon
 from rcon.types import StructuredLogLineWithMetaData
@@ -205,14 +206,14 @@ def process_end_of_game(
 
     if config.send_stats_message and not config.dry_run:
         recipients = [p for p in stats if p.get("player_id") in online]
-        if recipients:
-            try:
-                rcon.bulk_message_players(
-                    [p["player_id"] for p in recipients],
-                    [build_player_message(p, rewards, config) for p in recipients],
-                )
-            except Exception:
-                logger.exception("End of game rewards: could not message players")
+        message_players(
+            rcon,
+            (
+                (p["player_id"], build_player_message(p, rewards, config))
+                for p in recipients
+            ),
+            by=AUTHOR,
+        )
 
     granted = []
     for player_id, days in rewards.days.items():

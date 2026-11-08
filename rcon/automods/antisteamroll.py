@@ -20,6 +20,7 @@ from rcon.discord import send_to_discord_audit
 from rcon.logs.loop import on_match_end, on_match_start
 from rcon.maps import GameMode
 from rcon.models import AuditLog, enter_session
+from rcon.player_messages import message_players
 from rcon.types import GameEnum
 from rcon.user_config.auto_mod_antisteamroll import AutoModAntiSteamrollUserConfig
 
@@ -376,9 +377,9 @@ class AntiSteamrollAutomod:
         """Send ``(player_ids, message)`` deliveries; ``None`` ids means all players.
 
         Returns whether the announcement can be considered done. Empty messages
-        are skipped. Without an RCON connection nothing is sent and the
-        announcement is retried on a later cycle. A failed send is logged and
-        retried instead of stopping the Automod loop.
+        are skipped. Without an RCON connection, or when no player could be
+        messaged, nothing is recorded and the announcement is retried on a later
+        cycle instead of stopping the Automod loop.
         """
         values = {
             "remaining_minutes": int(remaining // 60),
@@ -389,20 +390,10 @@ class AntiSteamrollAutomod:
             for player_ids, template in deliveries
             if template.strip() and player_ids != []
         ]
-        if not self.config.dry_run:
-            if rcon is None:
-                return False
-            try:
-                for player_ids, message in deliveries:
-                    if player_ids is None:
-                        rcon.message_all_players(message)
-                    else:
-                        rcon.bulk_message_players(
-                            player_ids, [message] * len(player_ids)
-                        )
-            except Exception:
-                logger.exception("Anti-Steamroll: could not send %s announcement", kind)
-                return False
+        if not self.config.dry_run and (
+            rcon is None or not self._send(rcon, kind, deliveries)
+        ):
+            return False
 
         logger.info(
             "Anti-Steamroll %s (dry_run=%s): %s", kind, self.config.dry_run, summary
@@ -423,6 +414,39 @@ class AntiSteamrollAutomod:
                     "Anti-Steamroll: could not post the %s announcement to Discord",
                     kind,
                 )
+        return True
+
+    @staticmethod
+    def _send(rcon, kind, deliveries) -> bool:
+        """Send the deliveries; return False only when no one received anything.
+
+        Once at least one player got the announcement it is considered sent:
+        retrying it would repeat it to everyone who already received it.
+        """
+        attempted = sent = 0
+        for player_ids, message in deliveries:
+            if player_ids is None:
+                attempted += 1
+                try:
+                    rcon.message_all_players(message)
+                    sent += 1
+                except Exception:
+                    logger.exception("Anti-Steamroll: could not message all players")
+            else:
+                attempted += len(player_ids)
+                sent += message_players(
+                    rcon, ((player_id, message) for player_id in player_ids), by=AUTHOR
+                )
+        if attempted and not sent:
+            logger.error("Anti-Steamroll: could not send %s announcement", kind)
+            return False
+        if sent < attempted:
+            logger.warning(
+                "Anti-Steamroll: %s announcement reached %d of %d recipients",
+                kind,
+                sent,
+                attempted,
+            )
         return True
 
     def _record_announcement(self, kind, author, deliveries, summary) -> None:
