@@ -24,10 +24,9 @@ player, refreshed every 2 seconds.
   "Show players without a squad"); they stay in the search.
 - Dead players stay greyed where they died until they spawn again (option "Show dead players where they
   died"). A revive nearby glides, a respawn elsewhere jumps.
-- The current layer's grid (letters / numbers) and strongpoints are drawn over the image.
+- The current layer's grid (letters / numbers) is drawn over the image.
 - Warfare / Offensive: each sector is coloured by the team holding it, derived from the score (option
-  "Colour sectors by owner" to turn it off). The active strongpoint of each sector is drawn solid; the two
-  inactive ones are hidden ("Show inactive strongpoints" shows them faded).
+  "Colour sectors by owner" to turn it off).
 
 ## Permission
 
@@ -41,18 +40,13 @@ so only give it to trusted admins.
 - Positions: `worldPosition` of the RCON player info, already parsed by CRCON into `world_position` and returned
   by `Rcon.get_team_view()`. That call is cached in Redis for ~2 s and polled by the automods, so the map adds
   no RCON traffic; polling faster than 2 s would only return cached data.
-- Map geometry: `hllrcon` static layer data (`Layer.grid`, `Layer.sectors` → strongpoints). The tactical image
+- Map geometry: `hllrcon` static layer data (`Layer.grid`, `Layer.sectors`). The tactical image
   (`/tac-maps/<map_id>.webp`, shared with the objective picker) is assumed to be square and to cover 10 cells of
   the map's large (Warfare) grid on each axis. Skirmish layers keep that image and draw their own smaller grid.
 - Score and remaining time: `Rcon.get_gamestate()` (cached ~2 s). If it fails the map is still returned,
   without the banner.
 - Sector owners: the score is the number of sectors each team holds, counted from its spawn side
-  (`Map.allies_direction`). Only for layers with 5 sectors of 3 strongpoints (Warfare, Offensive).
-- Active strongpoints: the game server has **no command to read the current objectives**. CRCON records the
-  layout it set (Maps → Objectives, `set_game_layout`) in `MapsHistory()[0]["game_layout"]["set"]` when the
-  next match starts. When that record is empty (layout chosen randomly by the game) or belongs to another layer,
-  all 15 strongpoints are drawn dashed and the sidebar says the objectives are unknown. Setting the layout from
-  CRCON before each match (even with "random" rows, CRCON then draws them itself) makes them known.
+  (`Map.allies_direction`). Only for layers with 5 sectors of 3 capture zones (Warfare, Offensive).
 - World axes: `x` towards the east, `y` towards the south (game centimetres), mapped directly onto image pixels.
 - A position of exactly (0, 0, 0) is treated as dead / on the deployment screen (`alive: false`). The server
   does not keep the death location: the page remembers each player's last alive position in the browser
@@ -66,13 +60,13 @@ If hllrcon does not know the current layer, the page shows a message and no map.
 - Backend: `rcon/live_map.py` (pure builders + `live_map_for(rcon)`, tests in `tests/test_live_map.py`) and
   `RconAPI.get_live_map`.
 - Frontend: `rcongui/src/pages/views/map/` — `LiveMapCanvas.jsx` (SVG with pan/zoom, no map library), `PlayerLogs.jsx`, `ScoreBar.jsx`,
-  `MapSidebar.jsx`, `coordinates.js` (world → image → screen conversions) and `deadPlayers.js` (last known
-  positions), tested by `node --test src/pages/views/map/coordinates.test.mjs src/pages/views/map/deadPlayers.test.mjs`.
+  `MapSidebar.jsx`, `coordinates.js` (world → image → screen conversions), `deadPlayers.js` (last known
+  positions) and `playerLabel.js` (marker labels), tested by `node --test src/pages/views/map/*.test.mjs`.
 
 ## Previewing without a game server
 
 With the local stack (`docs/local-dev.md`) and `npm run dev`, open `/views/map?demo`: the page uses fake
-players moving around Carentan, a score that changes every 20 s, active objectives and fake kill logs (`rcongui/src/pages/views/map/demo.js`). This mode only
+players moving around Carentan, a score that changes every 20 s and fake kill logs (`rcongui/src/pages/views/map/demo.js`). This mode only
 exists in the Vite dev server; production builds do not contain it.
 
 ## Known limits
@@ -81,6 +75,8 @@ exists in the Vite dev server; production builds do not contain it.
   image is framed differently would show offset positions. Check by comparing your own position in game.
 - In Warfare the score assumes every sector is held by one team; a sector being captured keeps its previous
   colour until the score changes.
+- Strongpoints are not shown: the game server has no command to read the active objectives of the match in
+  progress, so drawing the 15 possible ones would be misleading.
 - Garrisons, outposts and other spawn points cannot be shown: the game server exposes them neither through
   RCON commands nor in the logs.
 - Vehicles are not shown separately: crew members appear at the vehicle's position.

@@ -19,7 +19,7 @@ export function worldToMap(extent, x, y) {
   };
 }
 
-/** Convert a world distance (e.g. a strongpoint radius) to map units. */
+/** Convert a world distance (e.g. the maximum glide distance) to map units. */
 export function worldLengthToMap(extent, length) {
   return (length / (extent.x_max - extent.x_min)) * MAP_SIZE;
 }

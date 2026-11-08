@@ -6,11 +6,10 @@ Everything here is a pure transformation of data CRCON already fetches:
   centimetres), which is cached for ~2 s and polled by the automods anyway, so the
   live map adds no RCON traffic;
 * score and remaining time come from ``Rcon.get_gamestate`` (also cached ~2 s);
-* map geometry (grid, sectors, strongpoints) comes from ``hllrcon``'s static layer data;
-* the active strongpoint of each sector comes from the game layout CRCON recorded
-  for the current match (``MapsHistory()[0]["game_layout"]``). The game server has
-  no command to read the current objectives, so they are only known when the layout
-  was set through CRCON (Maps → Objectives) before the match started.
+* map geometry (grid, sectors) comes from ``hllrcon``'s static layer data.
+
+Strongpoints are not shown: the game server has no command to read the active
+objectives of the match in progress.
 
 World coordinates: ``x`` grows towards the east and ``y`` towards the south, so
 they map directly onto image pixels (left→right, top→bottom). Tactical map images
@@ -19,7 +18,6 @@ they map directly onto image pixels (left→right, top→bottom). Tactical map i
 """
 
 import logging
-from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict
 
 import hllrcon
@@ -55,16 +53,6 @@ class GridGeometry(Extent):
     rows: int
 
 
-class StrongpointGeometry(TypedDict):
-    name: str
-    x: float
-    y: float
-    radius: float
-    sector: int
-    #: ``None`` when the current match layout is unknown.
-    active: bool | None
-
-
 class SectorGeometry(Extent):
     #: ``None`` when ownership cannot be derived from the score (game mode
     #: without a 5-sector front line, unknown score, or sector being contested).
@@ -78,8 +66,6 @@ class LiveMapLayer(TypedDict):
     image_extent: Extent
     grid: GridGeometry
     sectors: list[SectorGeometry]
-    strongpoints: list[StrongpointGeometry]
-    objectives_known: bool
 
 
 class LiveMapScore(TypedDict):
@@ -150,7 +136,7 @@ def _layer_classes(game: GameEnum):
 
 
 def _has_front_line(layer) -> bool:
-    """Warfare/Offensive: 5 sectors in a row, each with 3 strongpoints."""
+    """Warfare/Offensive: 5 sectors in a row, each with 3 capture zones."""
     return len(layer.sectors) == 5 and all(
         len(sector.capture_zones) == 3 for sector in layer.sectors
     )
@@ -184,36 +170,19 @@ def _allies_first(layer) -> bool:
     )
 
 
-def _active_objectives(layer, game_layout: Sequence[Any] | None) -> set[str] | None:
-    """Names of the active strongpoints, if ``game_layout`` matches this layer."""
-    if not game_layout or len(game_layout) != len(layer.sectors):
-        return None
-    names = {
-        capture_zone.strongpoint.name
-        for sector in layer.sectors
-        for capture_zone in sector.capture_zones
-    }
-    selected = {str(name) for name in game_layout}
-    if not selected <= names:
-        return None
-    return selected
-
-
 def build_layer(
     layer_id: str,
     game: GameEnum,
     *,
     score: tuple[int, int] | None = None,
-    game_layout: Sequence[Any] | None = None,
 ) -> LiveMapLayer | None:
     """Geometry of ``layer_id``, or ``None`` when hllrcon does not know the layer.
 
-    ``score`` is (allied, axis) and colours the sectors; ``game_layout`` is the list of
-    the 5 strongpoint names CRCON set for the current match (``GameLayout["set"]``).
+    ``score`` is (allied, axis) and colours the sectors.
 
     Skirmish layers play on a smaller grid than the tactical image, so the image
     extent is always taken from a large-mode layer of the same map, while the grid
-    and strongpoints shown are those of the current layer.
+    and sectors shown are those of the current layer.
     """
     layer_cls = _layer_classes(game)
     try:
@@ -231,12 +200,10 @@ def build_layer(
         layer.grid,
     )
 
-    front_line = _has_front_line(layer)
-    if front_line and score is not None:
+    if _has_front_line(layer) and score is not None:
         owners = sector_owners(len(layer.sectors), _allies_first(layer), *score)
     else:
         owners = [None] * len(layer.sectors)
-    active = _active_objectives(layer, game_layout) if front_line else None
 
     sectors: list[SectorGeometry] = []
     for sector, owner in zip(layer.sectors, owners):
@@ -258,21 +225,6 @@ def build_layer(
         "image_extent": _image_extent(large_grid),
         "grid": _grid_extent(layer.grid),
         "sectors": sectors,
-        "strongpoints": [
-            {
-                "name": capture_zone.strongpoint.name,
-                "x": capture_zone.strongpoint.center[0],
-                "y": capture_zone.strongpoint.center[1],
-                "radius": capture_zone.strongpoint.radius,
-                "sector": index,
-                "active": None
-                if active is None
-                else capture_zone.strongpoint.name in active,
-            }
-            for index, sector in enumerate(layer.sectors)
-            for capture_zone in sector.capture_zones
-        ],
-        "objectives_known": active is not None,
     }
 
 
@@ -346,7 +298,6 @@ def build_live_map(
     game: GameEnum,
     *,
     gamestate: dict[str, Any] | None = None,
-    game_layout: Sequence[Any] | None = None,
     allied_faction: str | None = None,
     axis_faction: str | None = None,
     match_start: int | None = None,
@@ -358,7 +309,6 @@ def build_live_map(
             layer_id,
             game,
             score=(score["allied"], score["axis"]) if score else None,
-            game_layout=game_layout,
         ),
         "score": score,
         "players": [build_player(p) for p in _team_view_players(team_view)],
@@ -379,16 +329,6 @@ def current_match() -> "MapInfo | None":
     return current if current.get("end") is None else None
 
 
-def game_layout_of(match: "MapInfo | None", layer_id: str) -> list[str | int] | None:
-    """Objectives CRCON set for ``match``, if it is ``layer_id`` and was set through CRCON.
-
-    The layout is recorded at match start from the last ``set_game_layout`` call.
-    """
-    if not match or str(match.get("name", "")).casefold() != layer_id.casefold():
-        return None
-    return list(match.get("game_layout", {}).get("set") or []) or None
-
-
 def live_map_for(rcon: "Rcon") -> LiveMap:
     """Live map for the server ``rcon`` is connected to (cached RCON reads only)."""
     layer = rcon.get_map()
@@ -403,7 +343,6 @@ def live_map_for(rcon: "Rcon") -> LiveMap:
         layer.id,
         rcon.game_profile.game,
         gamestate=gamestate,
-        game_layout=game_layout_of(match, layer.id),
         allied_faction=layer.map.allies.name,
         axis_faction=layer.map.axis.name,
         match_start=match.get("start") if match else None,

@@ -2,7 +2,24 @@
 // so the page can be previewed without a game server. Only imported behind
 // `import.meta.env.DEV`, so it is not part of production builds.
 
-const ACTIVE_OBJECTIVES = ["Blactot", "Ruins", "Town Center", "Customs", "Rail Causeway"];
+// Places on Carentan around which fake players gather and respawn.
+const SPAWN_POINTS = [
+  { name: "Blactot", x: -65543, y: -39732 },
+  { name: "502nd Start", x: -67076, y: 4670 },
+  { name: "Farm Ruins", x: -68814, y: 37720 },
+  { name: "Pumping Station", x: -36748, y: -29822 },
+  { name: "Ruins", x: -26183, y: 2343 },
+  { name: "Derailed Train", x: -39381, y: 28975 },
+  { name: "Canal Crossing", x: 5893, y: -39388 },
+  { name: "Town Center", x: 1022, y: -1022 },
+  { name: "Train Station", x: 247, y: 27698 },
+  { name: "Customs", x: 40817, y: -34225 },
+  { name: "Rail Crossing", x: 44172, y: -6297 },
+  { name: "Mount Halais", x: 33829, y: 51343 },
+  { name: "Canal Locks", x: 66827, y: -26457 },
+  { name: "Rail Causeway", x: 75612, y: 5968 },
+  { name: "La Maison Des Ormes", x: 72223, y: 38476 },
+];
 
 // Carentan Warfare geometry, as returned by rcon.live_map.build_layer.
 const LAYER = {
@@ -11,27 +28,6 @@ const LAYER = {
   game_mode: "warfare",
   image_extent: { x_min: -100800, y_min: -100800, x_max: 100800, y_max: 100800 },
   grid: { x_min: -100800, y_min: -100800, x_max: 100800, y_max: 100800, columns: 10, rows: 10 },
-  strongpoints: [
-    { name: "Blactot", x: -65543, y: -39732, radius: 5000 },
-    { name: "502nd Start", x: -67076, y: 4670, radius: 5000 },
-    { name: "Farm Ruins", x: -68814, y: 37720, radius: 5000 },
-    { name: "Pumping Station", x: -36748, y: -29822, radius: 5000 },
-    { name: "Ruins", x: -26183, y: 2343, radius: 3000 },
-    { name: "Derailed Train", x: -39381, y: 28975, radius: 5000 },
-    { name: "Canal Crossing", x: 5893, y: -39388, radius: 5000 },
-    { name: "Town Center", x: 1022, y: -1022, radius: 5000 },
-    { name: "Train Station", x: 247, y: 27698, radius: 5000 },
-    { name: "Customs", x: 40817, y: -34225, radius: 5000 },
-    { name: "Rail Crossing", x: 44172, y: -6297, radius: 5000 },
-    { name: "Mount Halais", x: 33829, y: 51343, radius: 3974 },
-    { name: "Canal Locks", x: 66827, y: -26457, radius: 5000 },
-    { name: "Rail Causeway", x: 75612, y: 5968, radius: 5496 },
-    { name: "La Maison Des Ormes", x: 72223, y: 38476, radius: 5000 },
-  ].map((strongpoint, index) => ({
-    ...strongpoint,
-    sector: Math.floor(index / 3),
-    active: ACTIVE_OBJECTIVES.includes(strongpoint.name),
-  })),
   sectors: [-100800, -60480, -20160, 20160, 60480].map((x_min) => ({
     x_min,
     x_max: x_min + 40320,
@@ -39,7 +35,6 @@ const LAYER = {
     y_max: 60480,
     owner: null,
   })),
-  objectives_known: true,
 };
 
 const ROLES = [
@@ -58,14 +53,14 @@ const pick = (items) => items[Math.floor(random() * items.length)];
 
 const players = [];
 let id = 0;
-for (const [team, strongpoints] of [
-  ["allies", LAYER.strongpoints.slice(0, 8)],
-  ["axis", LAYER.strongpoints.slice(6)],
+for (const [team, spawnPoints] of [
+  ["allies", SPAWN_POINTS.slice(0, 8)],
+  ["axis", SPAWN_POINTS.slice(6)],
 ]) {
   for (const unit of SQUADS) {
     for (let i = 0; i < 6; i += 1) {
       id += 1;
-      const anchor = pick(strongpoints);
+      const anchor = pick(spawnPoints);
       players.push({
         player_id: `7656119800000${String(id).padStart(4, "0")}`,
         name: `${team === "allies" ? "GI" : "Landser"}_${id}`,
@@ -97,7 +92,7 @@ function step() {
     player.y += (random() - 0.5) * 900;
     if (!player.alive && random() > 0.8) {
       // Respawn somewhere else on the map: the marker must jump, not glide.
-      const spawn = pick(LAYER.strongpoints);
+      const spawn = pick(SPAWN_POINTS);
       player.x = spawn.x + (random() - 0.5) * 4000;
       player.y = spawn.y + (random() - 0.5) * 4000;
       player.alive = true;
