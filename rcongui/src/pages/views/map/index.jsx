@@ -66,7 +66,6 @@ const LiveMapPage = () => {
   const [showUnassigned, setShowUnassigned] = useState(false);
   const [showDead, setShowDead] = useState(true);
   const [showSectorColors, setShowSectorColors] = useState(true);
-  const [showInactiveStrongpoints, setShowInactiveStrongpoints] = useState(false);
 
   // Last alive position of each player, so the dead stay on the map until they redeploy.
   // Forgotten when a new match starts.
@@ -141,7 +140,6 @@ const LiveMapPage = () => {
               showNames={showNames}
               showSquadNames={showSquadNames}
               showSectorColors={showSectorColors}
-              showInactiveStrongpoints={showInactiveStrongpoints}
               onSelect={setSelectedId}
             />
           </Box>
@@ -183,11 +181,8 @@ const LiveMapPage = () => {
               onShowUnassigned={setShowUnassigned}
               showDead={showDead}
               onShowDead={setShowDead}
-              layer={data?.layer ?? null}
               showSectorColors={showSectorColors}
               onShowSectorColors={setShowSectorColors}
-              showInactiveStrongpoints={showInactiveStrongpoints}
-              onShowInactiveStrongpoints={setShowInactiveStrongpoints}
             />
           )}
         </Box>

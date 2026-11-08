@@ -49,18 +49,14 @@ def test_large_layer_image_matches_its_grid():
     assert layer["grid"] == {**extent, "columns": 10, "rows": 10}
 
 
-def test_strongpoints_are_in_world_coordinates():
+def test_sectors_are_inside_the_image():
     layer = build_layer("carentan_warfare", GameEnum.HLL_WW2)
 
-    assert len(layer["strongpoints"]) == 15
-    blactot = next(sp for sp in layer["strongpoints"] if sp["name"] == "Blactot")
-    assert blactot["x"] == pytest.approx(-65543.41)
-    assert blactot["y"] == pytest.approx(-39731.965)
-    assert blactot["radius"] == 5000.0
+    assert len(layer["sectors"]) == 5
     image = layer["image_extent"]
-    for sp in layer["strongpoints"]:
-        assert image["x_min"] < sp["x"] < image["x_max"]
-        assert image["y_min"] < sp["y"] < image["y_max"]
+    for sector in layer["sectors"]:
+        assert image["x_min"] <= sector["x_min"] < sector["x_max"] <= image["x_max"]
+        assert image["y_min"] <= sector["y_min"] < sector["y_max"] <= image["y_max"]
 
 
 def test_skirmish_uses_the_large_image_and_its_own_grid():
@@ -145,9 +141,6 @@ def test_live_map_with_empty_server():
     }
 
 
-CARENTAN_LAYOUT = ["Blactot", "Ruins", "Town Center", "Customs", "Rail Causeway"]
-
-
 @pytest.mark.parametrize(
     "allies_first, allied, axis, expected",
     [
@@ -181,33 +174,6 @@ def test_sectors_without_score_or_front_line_have_no_owner():
     assert {s["owner"] for s in skirmish["sectors"]} == {None}
 
 
-def test_active_strongpoints_from_game_layout():
-    layer = build_layer(
-        "carentan_warfare", GameEnum.HLL_WW2, game_layout=CARENTAN_LAYOUT
-    )
-
-    assert layer["objectives_known"] is True
-    active = [sp["name"] for sp in layer["strongpoints"] if sp["active"]]
-    assert active == CARENTAN_LAYOUT
-    assert [sp["sector"] for sp in layer["strongpoints"][:4]] == [0, 0, 0, 1]
-
-
-@pytest.mark.parametrize(
-    "game_layout",
-    [
-        None,
-        [],
-        ["Blactot", "Ruins"],
-        ["Foy", "Ruins", "Town Center", "Customs", "Rail Causeway"],
-    ],
-)
-def test_unknown_or_foreign_game_layout(game_layout):
-    layer = build_layer("carentan_warfare", GameEnum.HLL_WW2, game_layout=game_layout)
-
-    assert layer["objectives_known"] is False
-    assert {sp["active"] for sp in layer["strongpoints"]} == {None}
-
-
 def test_build_score():
     gamestate = {
         "allied_score": 2,
@@ -229,15 +195,8 @@ def test_build_score():
     assert build_score(None) is None
 
 
-def _match(
-    name="carentan_warfare", layout=CARENTAN_LAYOUT, start=1_700_000_000, end=None
-):
-    return {
-        "name": name,
-        "start": start,
-        "end": end,
-        "game_layout": {"requested": [], "set": layout},
-    }
+def _match(name="carentan_warfare", start=1_700_000_000, end=None):
+    return {"name": name, "start": start, "end": end}
 
 
 def test_current_match_is_the_unfinished_history_head(monkeypatch):
@@ -249,13 +208,6 @@ def test_current_match_is_the_unfinished_history_head(monkeypatch):
 
     monkeypatch.setattr(live_map, "MapsHistory", list)
     assert live_map.current_match() is None
-
-
-def test_game_layout_only_for_the_current_layer():
-    assert live_map.game_layout_of(_match(), "carentan_warfare") == CARENTAN_LAYOUT
-    assert live_map.game_layout_of(_match(), "foy_warfare") is None
-    assert live_map.game_layout_of(_match(layout=[]), "carentan_warfare") is None
-    assert live_map.game_layout_of(None, "carentan_warfare") is None
 
 
 def _rcon():
@@ -275,7 +227,6 @@ def test_live_map_for_reports_the_current_match(monkeypatch):
     result = live_map.live_map_for(_rcon())
 
     assert result["match_start_ms"] == 1_700_000_000_000
-    assert result["layer"]["objectives_known"] is True
 
 
 def test_live_map_for_without_current_match(monkeypatch):
@@ -284,7 +235,6 @@ def test_live_map_for_without_current_match(monkeypatch):
     result = live_map.live_map_for(_rcon())
 
     assert result["match_start_ms"] is None
-    assert result["layer"]["objectives_known"] is False
 
 
 def test_live_map_for_survives_a_gamestate_failure(monkeypatch):

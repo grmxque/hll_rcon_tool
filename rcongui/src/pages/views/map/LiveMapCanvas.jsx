@@ -197,54 +197,6 @@ const Sectors = ({ sectors, extent, scale }) => (
 );
 
 /**
- * Strongpoints of the layer. When the match layout is known, only the active one of
- * each sector is drawn (inactive ones optionally, faded); otherwise all are drawn dashed.
- */
-const Strongpoints = ({ strongpoints, sectors, extent, scale, showInactive, colorByOwner }) => (
-  <g pointerEvents="none">
-    {strongpoints.map((strongpoint) => {
-      if (strongpoint.active === false && !showInactive) return null;
-      const center = worldToMap(extent, strongpoint.x, strongpoint.y);
-      const radius = worldLengthToMap(extent, strongpoint.radius);
-      const owner = colorByOwner ? sectors[strongpoint.sector]?.owner : null;
-      const isActive = strongpoint.active === true;
-      const color = owner ? TEAM_COLORS[owner] : "#fff";
-      return (
-        <g
-          key={`${strongpoint.name}-${strongpoint.x}-${strongpoint.y}`}
-          opacity={strongpoint.active === false ? 0.35 : 1}
-        >
-          <circle
-            cx={center.x}
-            cy={center.y}
-            r={radius}
-            fill={color}
-            fillOpacity={isActive ? 0.3 : 0.08}
-            stroke={isActive ? "#fff" : color}
-            strokeOpacity={isActive ? 0.95 : 0.6}
-            strokeDasharray={isActive ? undefined : `${4 / scale} ${3 / scale}`}
-            strokeWidth={(isActive ? 2.5 : 1.5) / scale}
-          />
-          <text
-            x={center.x}
-            y={center.y + radius + 11 / scale}
-            textAnchor="middle"
-            fontSize={(isActive ? 12 : 10) / scale}
-            fontWeight={isActive ? 700 : 400}
-            fill="#fff"
-            stroke="#000"
-            strokeWidth={3 / scale}
-            paintOrder="stroke"
-          >
-            {strongpoint.name}
-          </text>
-        </g>
-      );
-    })}
-  </g>
-);
-
-/**
  * Pannable / zoomable tactical map. The parent controls which players are shown
  * and which one is selected; `focusPlayer(id)` (via ref) centres the view on a player.
  */
@@ -257,7 +209,6 @@ const LiveMapCanvas = forwardRef(function LiveMapCanvas(
     showNames,
     showSquadNames,
     showSectorColors,
-    showInactiveStrongpoints,
     onSelect,
   },
   ref,
@@ -427,16 +378,6 @@ const LiveMapCanvas = forwardRef(function LiveMapCanvas(
             <Sectors sectors={layer.sectors} extent={layer.image_extent} scale={view.scale} />
           )}
           {grid && <Grid geometry={grid} scale={view.scale} />}
-          {layer && (
-            <Strongpoints
-              strongpoints={layer.strongpoints}
-              sectors={layer.sectors}
-              extent={layer.image_extent}
-              scale={view.scale}
-              showInactive={showInactiveStrongpoints}
-              colorByOwner={showSectorColors}
-            />
-          )}
           {layer && drawOrder(players, highlightSquad).map((player) => (
             <PlayerMarker
               key={player.player_id}

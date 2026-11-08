@@ -102,13 +102,9 @@ export default function MapSidebar({
   onShowUnassigned,
   showDead,
   onShowDead,
-  layer,
   showSectorColors,
   onShowSectorColors,
-  showInactiveStrongpoints,
-  onShowInactiveStrongpoints,
 }) {
-  const hasFrontLine = layer?.sectors?.length === 5;
   const inSquadFilter = (player) => showUnassigned || !isUnassigned(player);
   const aliveCount = players.filter((player) => player.alive).length;
   const aliveOnMap = players.filter((player) => player.alive && inSquadFilter(player)).length;
@@ -214,18 +210,6 @@ export default function MapSidebar({
           }
           label="Colour sectors by owner"
         />
-        {layer?.objectives_known && (
-          <FormControlLabel
-            control={
-              <Checkbox
-                size="small"
-                checked={showInactiveStrongpoints}
-                onChange={(e) => onShowInactiveStrongpoints(e.target.checked)}
-              />
-            }
-            label="Show inactive strongpoints"
-          />
-        )}
       </Box>
 
       <Typography variant="body2" color="text.secondary">
@@ -233,12 +217,6 @@ export default function MapSidebar({
         {deadOnMap > 0 ? ` (${deadOnMap} shown greyed)` : ""}
         {!showUnassigned && unassignedCount > 0 ? ` · ${unassignedCount} without a squad (hidden)` : ""}
       </Typography>
-      {hasFrontLine && !layer.objectives_known && (
-        <Alert severity="warning" variant="outlined">
-          Active strongpoints unknown: the game does not report them. They are only known when the layout was set
-          from CRCON (Maps → Objectives) before the match, so all strongpoints are shown.
-        </Alert>
-      )}
       <Alert severity="info" variant="outlined">
         Positions refresh every 2 seconds. Scroll or pinch to zoom, drag to move.
       </Alert>
