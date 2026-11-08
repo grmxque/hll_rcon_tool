@@ -25,7 +25,7 @@ that merge cheap:
   live in the VPS's untracked `.env`.
 - Integrate upstream with `git merge upstream/master`, never a rebase (the branch is published and deployed).
 - Update and deployment procedure: `docs/fork-maintenance.md`.
-- Fork features: `docs/anti-steamroll.md`, `docs/welcome-stats.md`, `docs/end-of-game-rewards.md`. Log loop hooks
+- Fork features: `docs/anti-steamroll.md`, `docs/welcome-stats.md`, `docs/end-of-game-rewards.md`, `docs/live-map.md`. Log loop hooks
   of fork modules are registered by importing them in the `# isort: split` block of `rcon/__init__.py`.
 
 ## Commands

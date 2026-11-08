@@ -11,6 +11,7 @@ from rcon.audit import ingame_mods, online_mods
 from rcon.cache_utils import RedisCached, get_redis_pool
 from rcon.commands import HLLCommandFailedError
 from rcon.discord import audit_user_config_differences
+from rcon.live_map import LiveMap, live_map_for
 from rcon.message_templates import (
     add_message_template,
     delete_message_template,
@@ -1080,6 +1081,10 @@ class RconAPI(Rcon):
             dry_run=False,
             reset_to_default=reset_to_default,
         )
+
+    def get_live_map(self) -> LiveMap:
+        """Map geometry, score and player positions (see ``rcon.live_map``)."""
+        return live_map_for(self)
 
     def get_auto_mod_solo_tank_config(self) -> AutoModNoSoloTankUserConfig:
         server_info = server_info_for_rcon(self)

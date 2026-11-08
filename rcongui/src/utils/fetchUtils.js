@@ -163,6 +163,7 @@ const SHARED_Commands = {
   GET_LIVE_LOGS: (params) => requestFactory({ method: "POST", cmd: "get_recent_logs", ...params }),
   GET_LIVE_SESSIONS: (params) => requestFactory({ method: "GET", cmd: "get_live_scoreboard", ...params }),
   GET_LIVE_TEAMS: (params) => requestFactory({ method: "GET", cmd: "get_team_view", ...params }),
+  GET_LIVE_MAP: (params) => requestFactory({ method: "GET", cmd: "get_live_map", ...params }),
   GET_CURRENT_MAP: (params) => requestFactory({ method: "GET", cmd: "get_map", ...params }),
   GET_MAPS: (params) => requestFactory({ method: "GET", cmd: "get_maps", ...params }),
   GET_MAP_ROTATION: (params) => requestFactory({ method: "GET", cmd: "get_map_rotation", ...params }),

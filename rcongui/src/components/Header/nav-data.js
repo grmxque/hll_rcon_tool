@@ -73,6 +73,7 @@ export const navMenus = [
         to: "/views/team",
         icon: <GroupsIcon />,
       },
+      { name: "Map", to: "/views/map", icon: <MapIcon /> },
     ],
   },
   {

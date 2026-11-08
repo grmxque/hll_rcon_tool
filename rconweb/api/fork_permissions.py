@@ -23,6 +23,7 @@ FORK_PERMISSIONS: tuple[tuple[str, str], ...] = (
     ("can_change_welcome_stats_config", "Can change Welcome Stats config"),
     ("can_view_end_of_game_rewards_config", "Can view End of Game Rewards config"),
     ("can_change_end_of_game_rewards_config", "Can change End of Game Rewards config"),
+    ("can_view_live_map", "Can view the live map (player positions)"),
 )
 
 

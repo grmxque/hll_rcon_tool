@@ -53,6 +53,20 @@ export HLL_REDIS_PORT=6380
 Toute commande `docker compose -f docker-compose.dev.yml ...` doit être lancée après `source dev.env`
 (images, ports et identifiants en viennent).
 
+Images statiques du frontend (icônes de rôles, cartes tactiques, logos) : en production, l'image Docker les
+copie dans le dossier servi par nginx. Avec `npm run dev`, Vite sert `rcongui/public/`, absent du dépôt
+(ignoré par git) ; sans lui, la vue **Map** n'a pas de fond de carte et les icônes manquent. Le remplir avec
+les images du jeu utilisé (`hll` ou `hllv`) :
+
+```bash
+mkdir -p rcongui/public
+cp -r assets/shared/. assets/hll/images/. rcongui/public/
+```
+
+Pour voir des données live (vues Live, Team, Map), remplacer `HLL_HOST`, `HLL_PORT` et `HLL_PASSWORD` par
+les identifiants RCON d'un vrai serveur de jeu. Seul Django tourne en local (pas d'automod ni de boucle de
+logs) : rien n'agit sur le serveur, sauf les actions lancées à la main depuis l'interface.
+
 ## 3. Démarrer les dépendances et initialiser la base
 
 ```bash
