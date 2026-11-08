@@ -144,7 +144,7 @@ export function demoLiveMap() {
     ...sector,
     owner: index < score.allied ? "allies" : "axis",
   }));
-  return structuredClone({ layer: { ...LAYER, sectors }, score, players });
+  return structuredClone({ layer: { ...LAYER, sectors }, score, players, match_start_ms: startedAt });
 }
 
 export function demoPlayerLogs(playerName) {

@@ -137,7 +137,12 @@ def test_live_map_flattens_squads_and_commanders():
 def test_live_map_with_empty_server():
     result = build_live_map({"fail_count": 0}, "unknown", GameEnum.HLL_WW2)
 
-    assert result == {"layer": None, "score": None, "players": []}
+    assert result == {
+        "layer": None,
+        "score": None,
+        "players": [],
+        "match_start_ms": None,
+    }
 
 
 CARENTAN_LAYOUT = ["Blactot", "Ruins", "Town Center", "Customs", "Rail Causeway"]
@@ -224,32 +229,68 @@ def test_build_score():
     assert build_score(None) is None
 
 
-def test_current_game_layout_only_for_the_current_layer(monkeypatch):
-    history = [
-        {
-            "name": "carentan_warfare",
-            "game_layout": {"requested": [], "set": CARENTAN_LAYOUT},
-        }
-    ]
-    monkeypatch.setattr(live_map, "MapsHistory", lambda: history)
+def _match(
+    name="carentan_warfare", layout=CARENTAN_LAYOUT, start=1_700_000_000, end=None
+):
+    return {
+        "name": name,
+        "start": start,
+        "end": end,
+        "game_layout": {"requested": [], "set": layout},
+    }
 
-    assert live_map.current_game_layout("carentan_warfare") == CARENTAN_LAYOUT
-    assert live_map.current_game_layout("foy_warfare") is None
-    history[0]["game_layout"]["set"] = []
-    assert live_map.current_game_layout("carentan_warfare") is None
+
+def test_current_match_is_the_unfinished_history_head(monkeypatch):
+    monkeypatch.setattr(live_map, "MapsHistory", lambda: [_match()])
+    assert live_map.current_match()["name"] == "carentan_warfare"
+
+    monkeypatch.setattr(live_map, "MapsHistory", lambda: [_match(end=1_700_005_000)])
+    assert live_map.current_match() is None
+
     monkeypatch.setattr(live_map, "MapsHistory", list)
-    assert live_map.current_game_layout("carentan_warfare") is None
+    assert live_map.current_match() is None
 
 
-def test_live_map_for_survives_a_gamestate_failure(monkeypatch):
-    monkeypatch.setattr(live_map, "current_game_layout", lambda layer_id: None)
+def test_game_layout_only_for_the_current_layer():
+    assert live_map.game_layout_of(_match(), "carentan_warfare") == CARENTAN_LAYOUT
+    assert live_map.game_layout_of(_match(), "foy_warfare") is None
+    assert live_map.game_layout_of(_match(layout=[]), "carentan_warfare") is None
+    assert live_map.game_layout_of(None, "carentan_warfare") is None
+
+
+def _rcon():
     rcon = Mock()
     rcon.get_map.return_value.id = "carentan_warfare"
     rcon.get_map.return_value.map.allies.name = "us"
     rcon.get_map.return_value.map.axis.name = "ger"
-    rcon.get_gamestate.side_effect = RuntimeError("RCON down")
+    rcon.get_gamestate.return_value = None
     rcon.get_team_view.return_value = {"fail_count": 0}
     rcon.game_profile.game = GameEnum.HLL_WW2
+    return rcon
+
+
+def test_live_map_for_reports_the_current_match(monkeypatch):
+    monkeypatch.setattr(live_map, "MapsHistory", lambda: [_match()])
+
+    result = live_map.live_map_for(_rcon())
+
+    assert result["match_start_ms"] == 1_700_000_000_000
+    assert result["layer"]["objectives_known"] is True
+
+
+def test_live_map_for_without_current_match(monkeypatch):
+    monkeypatch.setattr(live_map, "MapsHistory", list)
+
+    result = live_map.live_map_for(_rcon())
+
+    assert result["match_start_ms"] is None
+    assert result["layer"]["objectives_known"] is False
+
+
+def test_live_map_for_survives_a_gamestate_failure(monkeypatch):
+    monkeypatch.setattr(live_map, "MapsHistory", list)
+    rcon = _rcon()
+    rcon.get_gamestate.side_effect = RuntimeError("RCON down")
 
     result = live_map.live_map_for(rcon)
 
