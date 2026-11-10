@@ -5,6 +5,17 @@ from pydantic import Field, HttpUrl, field_serializer
 from rcon.user_config.utils import BaseUserConfig, key_check, set_user_config
 
 TopCategory = Literal["combat", "offense", "defense", "support"]
+# Role names of both games, as reported by the game server (lowercase).
+BuilderRole = Literal[
+    "officer",
+    "squadleader",
+    "spotter",
+    "engineer",
+    "armycommander",
+    "tankcommander",
+    "support",
+    "rifleman",
+]
 
 
 class EndOfGameRewardsUserConfig(BaseUserConfig):
@@ -88,12 +99,69 @@ class EndOfGameRewardsUserConfig(BaseUserConfig):
         title="Fidelity Reward (VIP Days)",
         description="Granted to players who are already VIP (not unlimited).",
     )
+    garrison_rewards_enabled: bool = Field(
+        default=False,
+        title="Top 3 Garrison Builders",
+        description="Reward the 3 players who built the most garrisons (detected from the support score, see docs/actions-tracking.md). Ties: the first to reach the count wins.",
+    )
+    garrison_reward_days: int = Field(
+        default=1, ge=0, title="Top 3 Garrison Builders Reward (VIP Days)"
+    )
+    node_rewards_enabled: bool = Field(
+        default=False,
+        title="Thank the Node Builders",
+        description="Reward every player who built at least one resource node.",
+    )
+    node_reward_days: int = Field(
+        default=1, ge=0, title="Node Builders Reward (VIP Days)"
+    )
+    garrison_builder_roles: list[BuilderRole] = Field(
+        default_factory=lambda: ["officer", "squadleader"],
+        title="Garrison Builder Roles",
+        description="Roles able to build a garrison (officer in HLL, squadleader in HLL Vietnam). Commander abilities give the same +50 support as a garrison.",
+    )
+    node_builder_roles: list[BuilderRole] = Field(
+        default_factory=lambda: ["engineer"],
+        title="Node Builder Roles",
+        description="Roles able to build a resource node.",
+    )
+    thanks_banner_enabled: bool = Field(
+        default=False,
+        title="Construction Thanks Banner",
+        description="During the match, after a new detected construction, broadcast the builders with their count (garrisons, then nodes), then restore the previous broadcast.",
+    )
+    thanks_banner_interval_minutes: int = Field(
+        default=5,
+        ge=1,
+        le=60,
+        title="Thanks Banner: Minimum Minutes Between Two Banners",
+    )
+    thanks_banner_seconds: int = Field(
+        default=30,
+        ge=5,
+        le=120,
+        title="Thanks Banner: Seconds per Message",
+    )
+    record_actions_snapshots: bool = Field(
+        default=False,
+        title="Record Actions Snapshots",
+        description="Write the polled player data of each match to a JSONL file in the logs folder, to replay and check the detection (python -m rcon.actions_tracking replay).",
+    )
     vip_description: str = Field(
         default="Top stats VIP",
         min_length=1,
         title="VIP Description",
         description='Stored with the VIP as "<player name> - <description>".',
     )
+
+    @property
+    def actions_tracking_enabled(self) -> bool:
+        return self.enabled and (
+            self.garrison_rewards_enabled
+            or self.node_rewards_enabled
+            or self.thanks_banner_enabled
+            or self.record_actions_snapshots
+        )
 
     @field_serializer("discord_webhook_url")
     def serialize_webhook(self, value: HttpUrl | None):

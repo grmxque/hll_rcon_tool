@@ -10,6 +10,7 @@ from functools import partial
 import discord_webhook
 from discord.utils import escape_markdown
 
+from rcon.actions_tracking.tracker import observe_poll
 from rcon.cache_utils import get_redis_client, ttl_cache
 from rcon.connection import HLLServerError
 from rcon.discord import make_hook
@@ -366,6 +367,7 @@ class LogLoop:
                 time.perf_counter() - started,
             )
             self.record_player_stats(current_map, curr_map_time_elapsed, dp)
+            observe_poll(self.rcon, current_map, dp)
 
         maps_history.update(self.ACTIVE_MAP_INDEX, current_map)
         return curr_map_time_elapsed
