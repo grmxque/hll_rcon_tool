@@ -27,6 +27,10 @@ class ScoreTable:
     mark_period: float = 20.0
     repair: int = 5  # blowtorch, every 5 s
     repair_period: float = 5.0
+    # +1 per supply consumed, to whoever placed the supplies (truck crate, support box, drop): a
+    # garrison or a node consumes 50, at the moment it is built. Observed in game: an officer
+    # building a garrison on his own truck crate gets +100.
+    supplies_consumed: int = 50
     # Largest support gain one player can plausibly get per second (big spawn wave on a garrison
     # plus a construction). Above that, the counter is not trusted (stats leaking from the previous
     # match).
@@ -38,13 +42,6 @@ class ScoreTable:
 class GameRules:
     """Physical constraints: what cannot happen, whatever the score says."""
 
-    # A garrison cannot be built within 200 m of a friendly garrison (game centimetres).
-    garrison_min_spacing: float = 20_000.0
-    # Replacing a destroyed garrison at the same place (destroyed, 50 supplies brought, rebuilt)
-    # takes at least this long after it was built.
-    garrison_rebuild_min_seconds: float = 30.0
-    # Two garrisons of the same builder: walk 200 m away and get 50 supplies again.
-    garrison_min_seconds_between: float = 30.0
     # One node of each type (munitions, manpower, fuel) per player, 9 per team. The limit of 3 nodes
     # of the same type per team cannot be checked: the node type is not observable.
     max_nodes_per_player: int = 3

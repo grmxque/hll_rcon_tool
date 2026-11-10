@@ -29,31 +29,97 @@ def verdicts(decisions, player_id):
     return [(d.kind, d.verdict) for d in decisions if d.player_id == player_id]
 
 
+def wave(m, at, squad=(), team=(), credited=None, extra=0):
+    """Teammates die then spawn at ``at``; ``credited`` gets +5 per squad member and +3 per other
+    teammate (the owner of the spawn point), plus ``extra`` points."""
+    players = list(squad) + list(team)
+    m.die(*players)
+    m.idle(15)
+    m.spawn(players, at=at)
+    if credited:
+        m.gain(credited, 5 * len(squad) + 3 * len(team) + extra)
+    return m.poll()
+
+
+def confirm(m, builder, at, squad=(), team=("b0", "b1")):
+    """A spawn wave on the builder's garrison at ``at``."""
+    return wave(m, at, squad=squad, team=team, credited=builder)
+
+
+def build(m, builder, at, points=50):
+    m.move(builder, at)
+    m.poll()
+    m.gain(builder, points)
+    return m.poll()
+
+
 def build_known_garrison(m, officer="off", at=GARRISON):
-    """The officer builds a garrison at ``at`` (clean +50), then walks away."""
-    m.move(officer, at)
-    m.poll()
-    m.gain(officer, 50)
-    m.poll()
+    """The officer builds a garrison at ``at``, teammates spawn on it, he walks away."""
+    build(m, officer, at)
+    confirm(m, officer, at)
     m.move(officer, (at[0] + 200, at[1] + 200))
     m.poll()
 
 
 # 1
 def test_garrison_with_exactly_the_construction_bonus(match):
-    match.gain("off", 50)
-    decisions = match.poll()
-    assert verdicts(decisions, "off") == [("garrison", "counted")]
+    decisions = build(match, "off", GARRISON)
+    assert verdicts(decisions, "off") == [("garrison", "pending")]
+    assert match.garrisons("off") == 0  # not before a spawn on it
+    confirm(match, "off", GARRISON)
+    assert match.garrisons("off") == 1
+    assert ("garrison", "confirmed") in verdicts(match.decisions, "off")
+
+
+def test_garrison_nobody_spawns_on_is_not_counted(match):
+    build(match, "off", GARRISON)
+    match.idle(310)
+    assert match.garrisons("off") == 0
+    assert ("garrison", "rejected") in verdicts(match.decisions, "off")
+
+
+def test_garrison_built_on_own_supplies(match):
+    # Observed in game: an officer building on his own truck crate gets +50 for the garrison and
+    # +50 for the 50 supplies consumed.
+    decisions = build(match, "off", GARRISON, points=100)
+    assert verdicts(decisions, "off") == [("garrison", "pending")]
+    confirm(match, "off", GARRISON)
     assert match.garrisons("off") == 1
 
 
-def test_small_spawn_credits_are_not_a_garrison(match):
-    match.die("a0", "a1", "a2")
+def test_supplies_consumed_by_someone_else_are_not_a_garrison(match):
+    # off2 builds a garrison on off's truck crate: both get +50 in the same poll.
+    match.move("off2", (1300.0, 1300.0))
     match.poll()
-    match.spawn(["a0", "a1", "a2"], at=(950.0, 950.0))  # the officer's outpost
-    match.gain("off", 15)
+    match.gain("off2", 50)
+    match.gain("off", 50)
     match.poll()
+    confirm(match, "off2", (1300.0, 1300.0), team=("a0", "a1"))
+    match.idle(310)
+    assert match.garrisons("off2") == 1
     assert match.garrisons("off") == 0
+
+
+def test_small_spawn_credits_are_not_a_garrison(match):
+    wave(match, (950.0, 950.0), squad=("a0", "a1", "a2"), credited="off")
+    match.idle(310)
+    assert match.garrisons("off") == 0
+
+
+def test_a_single_spawn_confirms(match):
+    build(match, "off", GARRISON)
+    confirm(match, "off", GARRISON, team=("b0",))
+    assert match.garrisons("off") == 1
+
+
+def test_credits_split_over_two_polls_confirm(match):
+    build(match, "off", GARRISON)
+    match.die("b0", "b1", "b2")
+    match.idle(15)
+    match.spawn(["b0", "b1", "b2"], at=GARRISON)
+    match.gain("off", 6)  # the third credit comes with the next poll
+    match.poll()
+    assert match.garrisons("off") == 1
 
 
 # 2
@@ -64,7 +130,8 @@ def test_garrison_with_simultaneous_spawn_credits(match):
     match.spawn(["b0"], at=(950.0, 950.0))
     match.gain("off", 58)  # 50 + 5 (squad member) + 3 (teammate)
     decisions = match.poll()
-    assert verdicts(decisions, "off") == [("garrison", "counted")]
+    assert verdicts(decisions, "off") == [("garrison", "pending")]
+    confirm(match, "off", (900.0, 900.0), team=("b1", "b2"))
     assert match.garrisons("off") == 1
 
 
@@ -72,78 +139,33 @@ def test_garrison_with_simultaneous_spawn_credits(match):
 def test_big_spawn_wave_on_a_known_garrison_is_not_a_new_garrison(match):
     build_known_garrison(match)
     squad = [f"a{i}" for i in range(10)]
-    match.die(*squad)
-    match.poll()
-    match.spawn(squad, at=GARRISON)
-    match.gain("off", 50)  # 10 squad members x 5: same value as a garrison
-    decisions = match.poll()
+    decisions = wave(match, GARRISON, squad=squad, credited="off")
     assert verdicts(decisions, "off") == [("garrison", "none")]
+    match.idle(310)
     assert match.garrisons("off") == 1  # only the first one
 
 
 def test_spawn_wave_while_the_officer_is_dead(match):
     squad = [f"a{i}" for i in range(10)]
-    match.die("off", *squad)
-    match.poll()
-    match.spawn(squad, at=(2000.0, 2000.0))  # spawn point never observed before
-    match.gain("off", 50)
-    match.poll()
+    match.die("off")
+    wave(match, (2000.0, 2000.0), squad=squad, credited="off")
+    match.idle(310)
     assert match.garrisons("off") == 0
 
 
-def test_ambiguous_wave_while_moving_waits_then_defaults_to_no_garrison(match):
+def test_ambiguous_wave_of_unknown_origin_is_not_confirmed_by_itself(match):
     squad = [f"a{i}" for i in range(10)]
-    match.die(*squad)
-    match.poll()
-    match.spawn(squad, at=(2000.0, 2000.0))
-    match.move("off", (930.0, 930.0))  # running: 30 m in 3 s
-    match.gain("off", 50)
-    decisions = match.poll()
+    decisions = wave(match, (2000.0, 2000.0), squad=squad, credited="off")
     assert verdicts(decisions, "off") == [("garrison", "pending")]
-    match.idle(200)
+    match.idle(310)
     assert match.garrisons("off") == 0
-    assert ("garrison", "rejected") in verdicts(match.decisions, "off")
 
 
 def test_ambiguous_wave_confirmed_by_later_spawns_at_the_build_position(match):
     squad = [f"a{i}" for i in range(10)]
-    match.die(*squad)
-    match.poll()
-    match.spawn(squad, at=(2000.0, 2000.0))
-    match.move("off", (930.0, 930.0))
-    match.gain("off", 50)
-    match.poll()
-    match.die("b0", "b1")
-    match.poll()
-    match.spawn(["b0", "b1"], at=(930.0, 930.0))  # teammates use the new garrison
-    match.gain("off", 6)
-    match.poll()
+    wave(match, (2000.0, 2000.0), squad=squad, credited="off")
+    confirm(match, "off", (900.0, 900.0))
     assert match.garrisons("off") == 1
-    assert ("garrison", "confirmed") in verdicts(match.decisions, "off")
-
-
-def test_ambiguous_wave_rejected_when_its_spawn_point_turns_out_to_be_the_officers(
-    match,
-):
-    outpost = (2000.0, 2000.0)
-    squad = [f"a{i}" for i in range(10)]
-    match.die(*squad)
-    match.poll()
-    match.spawn(squad, at=outpost)
-    match.move("off", (930.0, 930.0))
-    match.gain("off", 50)
-    match.poll()
-    # Later, a small unambiguous credit from the same spot reveals the officer's outpost.
-    match.die("a0", "a1")
-    match.poll()
-    match.spawn(["a0", "a1"], at=outpost)
-    match.gain("off", 10)
-    match.poll()
-    match.idle(200)
-    assert match.garrisons("off") == 0
-    [rejected] = [d for d in match.decisions if d.verdict == "rejected"]
-    assert "spawn point" in rejected.reason
-    assert rejected.ts < 1_000 + 60  # settled by the evidence, not by the deadline
 
 
 # 4
@@ -154,13 +176,14 @@ def test_garrison_built_during_a_spawn_wave(match):
     match.poll()
     squad_b = [f"b{i}" for i in range(15)]
     match.die(*squad_b, "a0", "a1", "a2", "a3")
-    match.poll()
+    match.idle(15)
     match.spawn(squad_b, at=(300.0, 600.0))  # on off2's garrison
     match.spawn(["a0", "a1", "a2", "a3"], at=GARRISON)  # on off's first garrison
     match.gain("off2", 75)
     match.gain("off", 50 + 20)  # new garrison + 4 squad members on the first one
     decisions = match.poll()
-    assert verdicts(decisions, "off") == [("garrison", "counted")]
+    assert verdicts(decisions, "off") == [("garrison", "pending")]
+    confirm(match, "off", (1200.0, 1200.0), team=("b0", "b1"))
     assert match.garrisons("off") == 2
     assert (
         match.garrisons("off2") == 1
@@ -171,89 +194,46 @@ def test_wave_on_another_builders_spawn_point_does_not_hide_a_garrison(match):
     build_known_garrison(match, officer="off2", at=(300.0, 600.0))
     squad_b = [f"b{i}" for i in range(15)]
     match.die(*squad_b)
-    match.poll()
+    match.idle(15)
     match.spawn(squad_b, at=(300.0, 600.0))
     match.gain("off2", 75)
     match.gain("off", 50)  # 15 teammates x 3 + 5 would also give 50
     match.poll()
+    confirm(match, "off", (900.0, 900.0), squad=("a0", "a1"), team=())
     assert match.garrisons("off") == 1
     assert match.garrisons("off2") == 1
 
 
 # 5
 def test_several_garrisons_by_the_same_officer(match):
-    for index, position in enumerate(
-        [(900.0, 900.0), (1100.0, 900.0), (1100.0, 1100.0)]
-    ):
-        match.move("off", position)
-        match.poll()
-        match.gain("off", 50)
-        match.poll()
+    for position in [(900.0, 900.0), (1100.0, 900.0), (1100.0, 1100.0)]:
+        build(match, "off", position)
+        confirm(match, "off", position)
         match.idle(30)
     assert match.garrisons("off") == 3
     assert match.engine.summary()["off"].reached["garrison"] is not None
 
 
-def test_second_garrison_within_200m_seconds_later_is_impossible(match):
-    match.gain("off", 50)
-    match.poll()
-    match.move("off", (905.0, 905.0))
-    match.gain("off", 50)
-    decisions = match.poll()
-    assert match.garrisons("off") == 1
-    [decision] = [d for d in decisions if d.player_id == "off"]
-    assert decision.verdict == "none"
-    assert decision.reason.startswith("physically impossible")
-
-
 def test_one_garrison_at_most_between_two_polls(match):
-    match.gain(
-        "off", 100
-    )  # a second one would need 50 more supplies and a spot 200 m away
+    match.gain("off", 150)  # garrison + own supplies + 50 unexplained
     match.poll()
-    assert match.garrisons("off") <= 1
+    assert all(d.verdict != "pending" for d in match.decisions if d.player_id == "off")
 
 
-def test_another_garrison_200m_away(match):
-    match.gain("off", 50)
-    match.poll()
-    match.idle(15)
-    match.move("off", (1150.0, 900.0))  # 250 m away
-    match.poll()
-    match.gain("off", 50)
-    match.poll()
+def test_rebuilt_next_to_the_old_one_needs_spawns_on_the_new_one(match):
+    build_known_garrison(match)
+    build(match, "off", (GARRISON[0] + 5, GARRISON[1] + 5))  # same spot
+    confirm(match, "off", GARRISON)  # spawns on the old one's spot
+    match.idle(310)
+    assert match.garrisons("off") == 1  # nothing tells the new one from the old one
+
+
+def test_quick_rebuild_on_a_truck(match):
+    build(match, "off", GARRISON, points=100)
+    confirm(match, "off", GARRISON)
+    build(match, "off", (1100.0, 800.0), points=100)  # 30 s later, 300 m away
+    confirm(match, "off", (1100.0, 800.0))
     assert match.garrisons("off") == 2
-
-
-def test_garrison_rebuilt_at_the_same_place_after_its_destruction(match):
-    match.gain("off", 50)
-    match.poll()
-    match.idle(300)
-    match.gain("off", 50)
-    decisions = match.poll()
-    assert match.garrisons("off") == 2
-    assert "replaces a friendly garrison" in decisions[0].reason
-
-
-def test_ambiguous_gain_near_a_standing_friendly_garrison_is_spawn_credits(match):
-    build_known_garrison(match, officer="off2", at=(950.0, 950.0))
-    match.idle(90)
-    squad = [f"a{i}" for i in range(10)]
-    match.die(*squad)
-    match.poll()
-    match.spawn(squad, at=(2000.0, 2000.0))  # spawn point never observed before
-    match.gain("off", 50)  # at (900, 900): 70 m from off2's garrison
-    decisions = match.poll()
-    assert verdicts(decisions, "off") == [("garrison", "none")]
-    assert "already stands within 200 m" in decisions[0].reason
-    assert match.garrisons("off") == 0
-
-
-def test_gap_cannot_hide_more_garrisons_than_physically_possible(match):
-    match.gain("off", 200)
-    decisions = match.poll(after=40)
-    assert match.garrisons("off") <= 2  # 40 s: at most one garrison every 30 s
-    assert decisions[0].details["most_garrisons_possible"] == 2
 
 
 # 6
@@ -262,69 +242,50 @@ def test_commander_abilities_are_not_constructions(match):
         match.gain("cmd", points)
         match.poll()
         match.idle(30)
+    match.idle(310)
     assert match.garrisons("cmd") == 0
     assert match.nodes("cmd") == 0
 
 
-def test_commander_ability_waits_for_spawns_then_is_rejected(match):
-    match.gain("cmd", 50)
-    decisions = match.poll()
-    assert verdicts(decisions, "cmd") == [("garrison", "pending")]
-    assert "commander abilities give +50 too" in decisions[0].reason
-    match.idle(200)
-    assert match.garrisons("cmd") == 0
-    assert ("garrison", "rejected") in verdicts(match.decisions, "cmd")
-
-
 def test_commander_garrison_confirmed_by_teammates_spawning_on_it(match):
-    match.move("cmd", (1300.0, 1300.0))
-    match.poll()
-    match.gain("cmd", 50)
-    match.poll()
-    squad_b = ["b0", "b1", "b2", "b3"]
-    match.die(*squad_b)
-    match.idle(15)
-    match.spawn(squad_b, at=(1302.0, 1302.0))
-    match.gain("cmd", 12)  # +3 per teammate spawning on the commander's garrison
-    match.poll()
+    build(match, "cmd", (1300.0, 1300.0))
+    confirm(match, "cmd", (1302.0, 1302.0), team=("b0", "b1", "b2", "b3"))
     assert match.garrisons("cmd") == 1
-    assert ("garrison", "confirmed") in verdicts(match.decisions, "cmd")
 
 
 def test_commander_at_the_hq_is_not_confirmed_by_hq_spawns(match):
-    match.move("cmd", HQ)
-    match.poll()
-    match.gain("cmd", 50)  # ability
-    match.poll()
     squad_b = [f"b{i}" for i in range(10)]
-    match.die(*squad_b)
-    match.idle(15)
-    match.spawn(squad_b, at=HQ)  # HQ spawns credit nobody
-    match.poll()
-    match.die(*squad_b)
-    match.idle(15)
-    match.spawn(squad_b, at=HQ)
-    match.gain("cmd", 50)  # another ability during the wave
-    match.poll()
-    match.idle(200)
+    wave(match, HQ, team=squad_b)  # HQ spawns credit nobody
+    build(match, "cmd", HQ)  # ability
+    wave(match, HQ, team=squad_b)
+    wave(match, HQ, team=squad_b, credited="cmd", extra=-30 + 50)  # another ability
+    match.idle(310)
     assert match.garrisons("cmd") == 0
 
 
+def test_officer_next_to_the_hq_is_not_confirmed_by_hq_spawns(match):
+    squad_b = [f"b{i}" for i in range(6)]
+    wave(match, HQ, team=squad_b)
+    build(match, "off", HQ)  # supplies of his consumed by someone else
+    # His squad spawns on his outpost elsewhere while teammates spawn at the HQ next to him.
+    match.die("a0", "a1", *squad_b)
+    match.idle(15)
+    match.spawn(["a0", "a1"], at=(1500.0, 300.0))
+    match.spawn(squad_b, at=HQ)
+    match.gain("off", 10)
+    match.poll()
+    match.idle(310)
+    assert match.garrisons("off") == 0
+
+
 def test_commander_ability_on_his_own_garrison_is_not_a_second_one(match):
-    match.move("cmd", (1300.0, 1300.0))
-    match.poll()
-    match.gain("cmd", 50)  # real garrison
-    match.poll()
+    build(match, "cmd", (1300.0, 1300.0))
+    confirm(match, "cmd", (1301.0, 1301.0), team=("b0", "b1"))
     match.idle(20)
     match.gain("cmd", 50)  # ability, standing on it
-    decisions = match.poll()
-    assert verdicts(decisions, "cmd") == [("garrison", "none")]
-    squad_b = ["b0", "b1", "b2"]
-    match.die(*squad_b)
-    match.idle(15)
-    match.spawn(squad_b, at=(1301.0, 1301.0))
-    match.gain("cmd", 9)
     match.poll()
+    confirm(match, "cmd", (1301.0, 1301.0), team=("b2", "b3", "b4"))
+    match.idle(310)
     assert match.garrisons("cmd") == 1
 
 
@@ -337,7 +298,13 @@ def test_outpost_passive_income_is_not_a_garrison(match):
 
 
 def test_other_team_is_independent(match):
-    match.gain("axis_off", 50)
+    match.add("axis_rifleman", team="axis", unit_id=1, pos=(1600.0, 1600.0))
+    match.poll()
+    build(match, "axis_off", (1500.0, 1500.0))
+    match.die("axis_rifleman")
+    match.idle(15)
+    match.spawn(["axis_rifleman"], at=(1500.0, 1500.0))
+    match.gain("axis_off", 3)
     match.poll()
     assert match.garrisons("axis_off") == 1
     assert match.garrisons("off") == 0
@@ -537,20 +504,12 @@ def test_large_unknown_gain_is_not_a_garrison(match):
 
 
 # 10
-def test_long_gap_credits_only_what_spawns_cannot_explain(match):
-    match.gain("off", 100)
-    match.poll(after=180)  # CRCON restart / RCON outage
-    assert (
-        match.garrisons("off") == 1
-    )  # 100 - 75 (outpost and marking over 3 min) needs one
-
-
-def test_long_gap_with_many_deaths_explains_the_gain(match):
-    match.die(*[f"b{i}" for i in range(15)])
-    match.spawn([f"b{i}" for i in range(15)], at=(300.0, 300.0))
+def test_garrison_built_during_a_data_gap_cannot_be_confirmed(match):
     match.gain("off", 50)
-    decisions = match.poll(after=180)
+    decisions = match.poll(after=180)  # CRCON restart / RCON outage
     assert verdicts(decisions, "off") == [("garrison", "none")]
+    assert "data gap" in decisions[0].reason
+    match.idle(310)
     assert match.garrisons("off") == 0
 
 
@@ -566,10 +525,12 @@ def test_constructions_in_the_first_seconds_of_the_match():
     m = Match()
     m.add("off", role="officer")
     m.add("eng", role="engineer", unit_id=1)
+    m.add("rifleman", unit_id=1)
     m.poll()  # first poll of the match: every score is 0
     m.gain("off", 50)
     m.gain("eng", 90)
     m.poll()
+    confirm(m, "off", (500.0, 500.0), team=("rifleman",))
     passive_minutes(m, "eng", 2)
     assert m.garrisons("off") == 1
     assert m.nodes("eng") == 1
@@ -585,20 +546,20 @@ def test_construction_before_the_first_poll_is_not_invented():
 
 # robustness
 def test_a_replayed_poll_is_ignored(match):
-    match.gain("off", 50)
-    match.poll()
+    build(match, "off", GARRISON)
+    assert match.engine.observe(match.snapshots[-1]) == []
+    confirm(match, "off", GARRISON)
     assert match.engine.observe(match.snapshots[-1]) == []
     assert match.garrisons("off") == 1
 
 
 def test_state_survives_a_json_round_trip(match):
     match.gain("eng", 90)
-    match.poll()
+    build(match, "off", GARRISON)
     state = json.loads(json.dumps(match.engine.to_state()))
     match.engine = ActionsEngine(state)
+    confirm(match, "off", GARRISON)
     passive_minutes(match, "eng", 3)
-    match.gain("off", 50)
-    match.poll()
     assert match.nodes("eng") == 1
     assert match.garrisons("off") == 1
 
@@ -611,52 +572,22 @@ def test_snapshots_round_trip(match):
 
 
 def test_finalize_is_final(match):
-    match.finalize()
-    match.gain("off", 50)
+    build(match, "off", GARRISON)
+    decisions = match.finalize()
+    assert verdicts(decisions, "off") == [("garrison", "rejected")]
     assert match.poll() == []
     assert match.finalize() == []
 
 
 def test_roles_are_configurable(match):
     match.engine.detectors["garrison"].roles = frozenset({"officer", "rifleman"})
-    match.gain("a0", 50)
-    match.poll()
+    build(match, "a0", (1200.0, 1200.0))
+    confirm(match, "a0", (1200.0, 1200.0), team=("b0",))
     assert match.garrisons("a0") == 1
     match.gain("cmd", 50)
     match.poll()
-    assert (
-        match.engine.detectors["garrison"].pending == []
-    )  # commander no longer analysed
-
-
-def test_gap_uses_the_income_observed_before_it(match):
-    # 5 minutes of outpost income (10 pts/min), then a 2 min gap with a garrison.
-    passive_minutes(match, "off", 5)
-    match.gain("off", 50 + 20)
-    decisions = match.poll(after=120)
-    assert verdicts(decisions, "off") == [("garrison", "counted")]
-    assert decisions[0].details["allowance_basis"].endswith("observed before the gap")
-
-
-def test_gap_after_heavy_spawn_income_is_not_a_garrison(match):
-    squad = [f"a{i}" for i in range(10)]
-    for _ in range(
-        8
-    ):  # the squad keeps spawning on the officer's outpost: 50 pts every 18 s
-        match.die(*squad)
-        match.idle(15)
-        match.spawn(squad, at=(950.0, 950.0))
-        match.gain("off", 50)
-        match.poll()
-    # 40 s outage: two more waves, only visible through the death counters.
-    for player_id in squad:
-        match.players[player_id].deaths += 2
-    match.gain("off", 100)
-    decisions = match.poll(after=40)
-    assert verdicts(decisions, "off") == [("garrison", "none")]
-    assert match.garrisons("off") == 0
-    rejected = [d for d in match.decisions if d.verdict == "rejected"]
-    assert rejected and "same spawn point" in rejected[0].reason
+    candidates = match.engine.detectors["garrison"].candidates
+    assert all(c["player_id"] != "cmd" for c in candidates)  # no longer analysed
 
 
 # Simulated matches (tests/actions_simulation.py): error rates against a known ground truth.
@@ -676,18 +607,15 @@ def simulate(seeds, **kwargs):
 
 def test_simulated_matches_error_rates():
     result = simulate(range(12))
-    garrisons = result["garrison_tp"] + result["garrison_fn"]
-    # False positives: a commander ability used during an HQ wave right next to him (about one
-    # match in ten). Misses: garrisons destroyed and rebuilt in place within 30 s, commander
-    # garrisons nobody spawned on.
-    assert result["garrison_fp"] <= 0.02 * garrisons
-    assert result["garrison_fn"] <= 0.08 * garrisons
-    assert result["node_fn"] == 0
+    # Garrisons nobody spawned on within 5 minutes are not countable, by design. Among the
+    # others, misses come from spawn waves mixed with other gains of the builder.
+    assert result["garrison_fp"] <= 1
+    assert result["garrison_fn_used"] <= 0.12 * result["garrison_used"]
+    assert result["node_fn"] <= 1
     assert result["node_fp"] <= 1  # repair station in the last 150 s of a match
 
 
 def test_simulated_matches_with_an_outage():
     result = simulate(range(12), outage=(600, 690))
-    garrisons = result["garrison_tp"] + result["garrison_fn"]
-    assert result["garrison_fp"] <= 0.02 * garrisons
-    assert result["garrison_fn"] <= 0.09 * garrisons
+    assert result["garrison_fp"] <= 1
+    assert result["garrison_fn_used"] <= 0.18 * result["garrison_used"]

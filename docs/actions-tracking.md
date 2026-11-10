@@ -50,15 +50,15 @@ between two polls with the score sources that can produce it, within what the ga
 | Blowtorch repair | 5 per 5 s |
 | Repair station | 50 / 40 (same as a node) |
 | Commander abilities | 50 to 100 (several give exactly 50) |
+| Supplies consumed by a construction (to whoever placed them: truck crate, support box, drop) | 1 per supply, 50 per garrison or node |
+
+The supplies credit was observed in game: an officer building a garrison on his own truck crate gets +100.
 
 `GameRules`, what cannot happen whatever the score says:
 
 | Rule | Value |
 | --- | --- |
 | Garrisons per builder between two polls | 1 |
-| Distance between two friendly garrisons | 200 m |
-| Replacing a destroyed garrison within those 200 m | not before 30 s after it was built |
-| Two garrisons of the same builder (data gaps) | 30 s apart at least (walk 200 m, bring 50 supplies) |
 | Nodes per player | 3 (one of each type) |
 | Nodes per team | 9 |
 | Nodes of the same type per team | 3: **not checked**, the node type is not observable |
@@ -69,64 +69,51 @@ Only players whose role was in `garrison_builder_roles` at the previous poll are
 requires dying, so the role of the construction is the role before). Default: `officer` (squad leaders) and
 `armycommander`. The roles are validated against the HLL role catalog.
 
-**Commander.** Several of his abilities give exactly +50 (Encouraged, Airhead, Final Stand, Recon Plane,
-Reinforce, Supply Drop, Ammo Drop), like a garrison. His construction-like gains are therefore never counted
-directly: they wait (pending, 3 minutes) for one confirmation, and are rejected without it. Within 200 m of a
-standing friendly garrison or of another garrison awaiting confirmation, a commander gain is not a garrison
-(an ability used while standing on his own garrison). A data gap never credits him a garrison.
+**A garrison is only counted once teammates spawn on it.** Several sources give the same +50 as a garrison:
+commander abilities (Encouraged, Airhead, Final Stand, Recon Plane, Reinforce, Supply Drop, Ammo Drop), the
+supplies of a player consumed by someone else's construction, a spawn wave. The support gain only makes a
+**candidate**; a garrison nobody spawns on within 5 minutes is never counted.
 
 **Spawns.** A teammate spawned when they come back alive after being dead or on the deployment screen, unless
 they are within 25 m of where they went down without a new death (revive), or when their deaths increase with
 a jump of more than 100 m between two polls. Spawns of the previous poll stay usable once (the credit and the
 new position are not always reported by the same poll).
 
-**Two hypotheses per gain**, never an exact match on 50:
+**Candidate.** The gain is explained in two ways, never by an exact match on 50:
 
 - **H0, no construction**: `gain = 5 × squad spawns + 3 × other spawns + outpost + marking`, bounded by the spawns
   observed in the team;
-- **H1, one garrison**: the same with 50 added.
-
-**Friendly garrisons within 200 m.** The detector knows the friendly garrisons it detected; one is presumed
-standing while teammates spawn on it or for 20 minutes after it was built or last used. A gain at less than
-200 m from a standing friendly garrison:
-
-- built less than 30 s ago: no garrison, whatever the gain ("physically impossible");
-- older: a garrison only when H1 is the **only** explanation; it is then a replacement, and the old one is
-  considered destroyed. An ambiguous gain is spawn credits.
+- **H1, one garrison**: the same with 50 added, or 100 when built on the player's own supplies.
 
 | H0 | H1 | Decision |
 | --- | --- | --- |
-| impossible | exact | garrison |
+| impossible | exact | candidate |
 | exact | impossible | none |
-| impossible | impossible | an unknown source is involved: a garrison only if it leaves ≤ 20 points unexplained, explains at least 40 points that H0 cannot, and no friendly garrison stands within 200 m |
-| exact | exact | context, below |
+| impossible | impossible | an unknown source is involved: candidate only if H1 leaves ≤ 20 points unexplained and explains at least 40 points that H0 cannot |
+| exact | exact | none if the spawns appeared on a known spawn point of the player (his outpost, his garrisons), candidate otherwise |
 
-When both fit (for example 10 spawns of 5 = 50), in this order:
+The player must have been alive during the interval. Builders are processed in this order: unambiguous ones
+first, then those whose spawns are on their own spawn point, so that they claim their spawn credits before the
+ambiguous ones are analysed (a spawn credits only one player).
 
-1. the player was dead during the whole interval: no garrison;
-2. the spawns that explain H0 appeared on a **known spawn point of this player** (garrisons detected for them,
-   points where their spawn credits were observed): no garrison;
-3. a friendly garrison stands within 200 m: no garrison;
-4. those spawns came from **another builder's spawn point**: garrison;
-5. the same spot already gave this player an ambiguous gain: it is their spawn point, both are settled as no
-   garrison;
-6. otherwise **pending** for 3 minutes, then confirmed or rejected (below). Without evidence, default:
-   garrison if the player was stationary (moved less than 20 m), none if they were moving.
+**Confirmation.** A candidate is confirmed when, in one poll:
 
-**Confirmation of a pending garrison.** Teammates spawn within 50 m of the build position **and** the
-builder's support gain of that poll matches their spawn credits (+5 squad member, +3 other teammate, at most
-15 other points). Only the owner of a spawn point gets credits, so HQ spawns next to a commander confirm
-nothing. Spawns on a spawn point of the builder known before the pending case never confirm it. A pending
-case is rejected when its H0 spawns turn out to be on the builder's spawn point.
+- teammates spawn within 50 m of the build position, and clearly closer to it (15 m) than to a spawn point
+  the builder already had (his outpost, his garrisons);
+- the builder's support gain is **exactly** the credits of some of those spawns (+5 squad member, +3 other
+  teammate; the credit of a spawn can come with the next poll), plus credits of spawns on his other known
+  spawn points, plus possibly an outpost tick or a marking;
+- and his other observed credits alone do not explain that gain: then those teammates spawned at a point that
+  credits nobody;
+- the spot is not one where teammates already spawned without crediting anybody before the candidate (an HQ).
 
-Builders are processed in this order: unambiguous ones first, then those whose spawns are on their own spawn
-point, so that they claim their spawn credits before the ambiguous ones are analysed.
+Only the owner of a spawn point gets credits, so HQ spawns next to a commander, or next to an officer whose
+supplies were just consumed by someone else, confirm nothing. When a builder has several candidates near the
+wave, the closest one is confirmed. Candidates not confirmed within 5 minutes, or at the end of the match, are
+rejected.
 
-**Data gaps** (more than 20 s between two polls: RCON outage, service restart): the other income during the gap
-is estimated from the player's own non-construction income over the 10 previous minutes (at least 2 minutes
-observed), with a 50 % margin plus 20 points, capped by the largest income the deaths of the teammates allow.
-Garrisons are credited for what goes beyond, one per 30 s of gap at most. Without history, the worst case alone
-is used.
+**Data gaps** (more than 20 s between two polls: RCON outage, service restart): the positions during the gap
+are unknown, so a garrison built then cannot be confirmed and is not counted.
 
 ## Nodes
 
@@ -149,9 +136,9 @@ passive production stream (the nodes keep producing after a class change).
 
 - Each decision is logged by the log loop (`Action <kind> <verdict>: <name> <player_id> (+gain in Ns) <reason>
   <details>`) and pushed to the Redis list `actions_tracking:<server>:<start>:decisions` (last 2000). Verdicts:
-  `counted`, `none`, `pending`, then `confirmed` / `rejected`; `reset` / `ignored` for the counters. The details
-  show both hypotheses: unexplained points, squad and team spawns used, spawns available, near the player's
-  points and claimable, friendly garrisons within 200 m, alive state, role.
+  `none`, `pending` (garrison candidate, node awaiting its production), then `confirmed` / `rejected`;
+  `reset` / `ignored` for the counters. The details show both hypotheses: unexplained points, squad and team
+  spawns used, spawns available, near the player's points and claimable, alive state, role.
 - `record_actions_snapshots` writes every poll of the match to
   `$LOGGING_PATH/actions_snapshots/<server>_<start>.jsonl` (20 last files kept). Replay a file:
 
@@ -189,29 +176,29 @@ passive production stream (the nodes keep producing after a class change).
 
 ## Known limits
 
-- When a construction and spawn credits give exactly the same gain with no spatial or contention evidence and
-  no later evidence, the decision is a default (stationary player), not a certainty.
-- Destroyed garrisons are not observable: a garrison destroyed and rebuilt in place within 30 s, or in place
-  with an ambiguous gain, is missed. Garrisons the detector missed do not block the 200 m rule.
+- A garrison nobody spawns on within 5 minutes is not counted (simulation: about 14 % of the garrisons). Among
+  the garrisons used, about 8 % are missed: their spawn waves come with other gains of the builder that the
+  table cannot explain exactly, or the builder left.
+- A garrison rebuilt in place of the builder's own previous one cannot be told from it (its spawns are those
+  of the old spot).
+- A garrison built during a data gap is not counted.
+- A commander ability used during a spawn wave on a fresh point right next to him that credits him exactly
+  could be confirmed (simulation: about one in 40 matches).
 - A node and a repair station are identical when built; a node destroyed before its first tick stays
   unconfirmed. A repair station built in the last 150 s of a match counts as a node.
-- In a data gap, a player whose spawn income suddenly rises above 1.5 times their usual rate can get a false
-  garrison; a long gap can hide garrisons. Outposts or garrisons of spotters / commanders are not modelled as
-  claimants of spawn credits.
 - Constructions before the first poll of the tracking (CRCON started mid-match) are invisible, except nodes
   found through their passive production.
-- A commander ability used during a spawn wave on a point right next to him that credits him exactly
-  (simulation: about one false garrison in ten matches); a commander garrison nobody spawns on within 3 minutes
-  is missed (simulation: about 16 % of his garrisons).
 - HLL (WW2) only.
 
 ## Tests
 
 - `tests/test_actions_detection.py`: scenarios poll by poll (`tests/actions_scenarios.py`), each checking false
-  positives and false negatives, the game rules, plus a seeded simulation of whole matches
-  (`tests/actions_simulation.py`: synchronised spawn waves, outposts, garrisons respecting the 200 m rule and
-  destroyed at random, nodes within the player / team limits, repair stations, commander abilities, polls every
-  2.5–4.5 s, optional outage) that measures the error rates against the ground truth. The simulation applies
-  the same score table and rules: it tests the decision logic, not the game values.
+  positives and false negatives, plus a seeded simulation of whole matches (`tests/actions_simulation.py`:
+  players walking across the map, synchronised spawn waves on the HQ, outposts and garrisons, garrisons
+  destroyed at random, supplies consumed and credited to their owner (the builder, another squad leader, a
+  support), nodes within the player / team limits, repair stations, commander abilities, polls every
+  2.5–4.5 s, optional outage) that measures the error rates against the ground truth, separating the garrisons
+  someone spawned on. The simulation applies the same score table and rules: it tests the decision logic, not
+  the game values.
 - `tests/test_actions_tracking.py`: Redis persistence, restart, idempotence, banner, recording and replay, log
   loop hook.

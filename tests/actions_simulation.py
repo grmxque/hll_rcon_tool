@@ -20,6 +20,7 @@ from rcon.actions_tracking.model import (
 
 MAP_SIZE = 2_000.0  # metres
 RESPAWN_WAVE = 20  # seconds
+CONFIRMATION_WINDOW = 300  # seconds, as CONFIRMATION_SECONDS in the garrison detector
 
 
 @dataclass
@@ -37,11 +38,15 @@ class SimPlayer:
     still_until: int = 0
     nodes: list[int] = field(default_factory=list)  # build second of each node
     last_garrison: int = -1_000
+    target: tuple[float, float] | None = None
 
 
 @dataclass
 class Truth:
     garrisons: dict[str, int] = field(default_factory=dict)
+    # Garrisons teammates spawned on within the confirmation window, per builder: the others can
+    # never be counted (nothing confirms them), by design.
+    used_garrisons: dict[str, set[int]] = field(default_factory=dict)
     nodes: dict[str, int] = field(default_factory=dict)
 
 
@@ -123,8 +128,7 @@ class Simulation:
                 ) * RESPAWN_WAVE + RESPAWN_WAVE
                 continue
             if second >= player.still_until:
-                player.x = min(MAP_SIZE, max(0.0, player.x + rng.uniform(-4, 4)))
-                player.y = min(MAP_SIZE, max(0.0, player.y + rng.uniform(-4, 4)))
+                self._walk(player)
             self._act(player, second)
         # Garrisons get destroyed (about 7 min on average), so others are rebuilt, sometimes in place.
         for garrison in list(self.garrisons):
@@ -138,6 +142,18 @@ class Simulation:
             for built in player.nodes:
                 if second > built and (second - built) % 60 == 0:
                     player.support += 10
+
+    def _walk(self, player: SimPlayer) -> None:
+        """Walk at 3 m/s towards a destination, then pick another one."""
+        if (
+            player.target is None
+            or math.hypot(player.target[0] - player.x, player.target[1] - player.y) < 5
+        ):
+            player.target = self._random_pos()
+        dx, dy = player.target[0] - player.x, player.target[1] - player.y
+        length = math.hypot(dx, dy)
+        player.x += 3 * dx / length
+        player.y += 3 * dy / length
 
     def _act(self, player: SimPlayer, second: int) -> None:
         rng = self.rng
@@ -160,6 +176,7 @@ class Simulation:
             ):
                 player.still_until = second + 8
                 player.support += 90
+                self._consume_supplies(player, own=0.2, officer=0.2, support=0.4)
                 player.nodes.append(second)
                 self.truth.nodes[player.player_id] = len(player.nodes)
             elif rng.random() < 1 / 1500:
@@ -179,7 +196,10 @@ class Simulation:
         player.last_garrison = second
         player.still_until = second + 4
         player.support += 50
-        self.garrisons.append((player.player_id, player.team, player.x, player.y))
+        self._consume_supplies(player, own=0.3, officer=0.2, support=0.3)
+        self.garrisons.append(
+            (player.player_id, player.team, player.x, player.y, second)
+        )
         self.truth.garrisons[player.player_id] = (
             self.truth.garrisons.get(player.player_id, 0) + 1
         )
@@ -187,10 +207,29 @@ class Simulation:
             oldest = next(g for g in self.garrisons if g[1] == player.team)
             self.garrisons.remove(oldest)  # destroyed
 
+    def _consume_supplies(
+        self, builder: SimPlayer, own: float, officer: float, support: float
+    ) -> None:
+        """The 50 supplies consumed credit whoever placed them: the builder's own truck crate,
+        another squad leader's crate, a support box, or a source nobody is credited for."""
+        draw = self.rng.random()
+        team = [p for p in self.players.values() if p.team == builder.team]
+        if draw < own:
+            owner = builder
+        elif draw < own + officer:
+            owner = self.rng.choice(
+                [p for p in team if p.role == "officer" and p is not builder]
+            )
+        elif draw < own + officer + support:
+            owner = self.rng.choice([p for p in team if p.role == "support"])
+        else:
+            return
+        owner.support += 50
+
     def _garrison_spot_free(self, player: SimPlayer) -> bool:
         return all(
             math.hypot(player.x - x, player.y - y) >= 200
-            for _, team, x, y in self.garrisons
+            for _, team, x, y, _built in self.garrisons
             if team == player.team
         )
 
@@ -203,10 +242,15 @@ class Simulation:
         officer_id = f"{player.team}-{player.unit_id}-0"
         if officer_id in self.outposts and officer_id != player.player_id:
             options.append(("outpost", officer_id, self.outposts[officer_id]))
-        for builder, team, x, y in self.garrisons:
+        for builder, team, x, y, built in self.garrisons:
             if team == player.team:
-                options.append(("garrison", builder, (x, y)))
-        _kind, builder, (x, y) = rng.choice(options)
+                options.append(("garrison", (builder, built), (x, y)))
+        kind, owner, (x, y) = rng.choice(options)
+        builder = owner
+        if kind == "garrison":
+            builder, built = owner
+            if second - built <= CONFIRMATION_WINDOW and builder != player.player_id:
+                self.truth.used_garrisons.setdefault(builder, set()).add(built)
         player.x, player.y = x + rng.uniform(-10, 10), y + rng.uniform(-10, 10)
         player.alive = True
         player.respawn_at = None
@@ -216,24 +260,29 @@ class Simulation:
 
 
 def score(engine: ActionsEngine, truth: Truth) -> dict:
-    """Garrison counts per officer (true/false positives, misses) and node eligibility."""
+    """Garrison counts per builder (true/false positives, misses) and node eligibility."""
     summary = engine.summary()
-    tp = fp = fn = 0
+    tp = fp = fn = fn_used = 0
     builders = set(truth.garrisons) | {
         pid for pid, actions in summary.items() if actions.count("garrison")
     }
     for pid in builders:
         detected = summary[pid].count("garrison") if pid in summary else 0
         real = truth.garrisons.get(pid, 0)
+        used = len(truth.used_garrisons.get(pid, ()))
         tp += min(detected, real)
         fp += max(0, detected - real)
         fn += max(0, real - detected)
+        fn_used += max(0, used - detected)
     node_detected = {pid for pid, actions in summary.items() if actions.count("node")}
     node_real = set(truth.nodes)
     return {
         "garrison_tp": tp,
         "garrison_fp": fp,
         "garrison_fn": fn,
+        # Misses among the garrisons someone spawned on: the others are not countable.
+        "garrison_used": sum(len(v) for v in truth.used_garrisons.values()),
+        "garrison_fn_used": fn_used,
         "node_tp": len(node_detected & node_real),
         "node_fp": len(node_detected - node_real),
         "node_fn": len(node_real - node_detected),
