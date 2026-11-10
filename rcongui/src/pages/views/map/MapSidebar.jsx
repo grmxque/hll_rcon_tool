@@ -17,6 +17,7 @@ import MyLocationIcon from "@mui/icons-material/MyLocation";
 import { ActionMenuButton } from "@/features/player-action/ActionMenu";
 import { generatePlayerActions } from "@/features/player-action/actions";
 import { TEAM_COLORS } from "./LiveMapCanvas";
+import { garrisonCounts } from "./garrisons";
 
 const TEAM_LABELS = { allies: "Allies", axis: "Axis", unassigned: "Unassigned" };
 
@@ -104,7 +105,11 @@ export default function MapSidebar({
   onShowDead,
   showSectorColors,
   onShowSectorColors,
+  garrisons,
+  showGarrisons,
+  onShowGarrisons,
 }) {
+  const { confirmed, candidates } = garrisonCounts(garrisons);
   const inSquadFilter = (player) => showUnassigned || !isUnassigned(player);
   const aliveCount = players.filter((player) => player.alive).length;
   const aliveOnMap = players.filter((player) => player.alive && inSquadFilter(player)).length;
@@ -209,6 +214,12 @@ export default function MapSidebar({
             <Checkbox size="small" checked={showSectorColors} onChange={(e) => onShowSectorColors(e.target.checked)} />
           }
           label="Colour sectors by owner"
+        />
+        <FormControlLabel
+          control={
+            <Checkbox size="small" checked={showGarrisons} onChange={(e) => onShowGarrisons(e.target.checked)} />
+          }
+          label={`Show garrisons (${confirmed} confirmed, ${candidates} possible)`}
         />
       </Box>
 

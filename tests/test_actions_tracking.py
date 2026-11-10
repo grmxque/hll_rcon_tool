@@ -147,6 +147,45 @@ def test_invalid_data_never_breaks_the_log_loop(red, config):
     tracker.observe_poll(Mock(), MATCH, None, now=2)
 
 
+def test_live_garrisons_candidate_then_confirmed(red, config):
+    rcon = Mock()
+    tracker.observe_poll(rcon, MATCH, players(off=0), now=10_003)
+    tracker.observe_poll(rcon, MATCH, players(off=50), now=10_006)
+    [candidate] = tracker.live_garrisons(MATCH["start"])
+    assert candidate == {
+        "x": 1000.0,
+        "y": 1000.0,
+        "team": "allies",
+        "status": "candidate",
+        "builder_id": "off",
+        "builder_name": "Off",
+        "built_at": 10_006,
+        "last_seen": None,
+    }
+    tracker.observe_poll(rcon, MATCH, players("dead", off=50), now=10_009)
+    tracker.observe_poll(rcon, MATCH, players((1000.0, 1000.0), off=53), now=10_012)
+    [confirmed] = tracker.live_garrisons(MATCH["start"])
+    assert confirmed["status"] == "confirmed"
+    assert confirmed["built_at"] == 10_006
+    assert confirmed["last_seen"] == 10_012
+
+
+def test_confirmed_garrison_nobody_uses_disappears_from_the_live_map(red, config):
+    rcon = Mock()
+    build_and_confirm(rcon, 10_003)
+    assert tracker.live_garrisons(MATCH["start"])
+    tracker.observe_poll(rcon, MATCH, players(off=53), now=10_012 + 21 * 60)
+    assert tracker.live_garrisons(MATCH["start"]) == []
+
+
+def test_no_live_garrisons_without_tracking(red, config):
+    rcon = Mock()
+    build_and_confirm(rcon, 10_003)
+    config["value"] = settings(enabled=False)
+    assert tracker.live_garrisons(MATCH["start"]) == []
+    assert tracker.live_garrisons(None) == []
+
+
 def test_banner_after_a_new_construction(red, config, monkeypatch):
     queue = Mock()
     monkeypatch.setattr("rcon.workers.get_queue", lambda: queue)

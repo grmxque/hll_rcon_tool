@@ -27,6 +27,7 @@ from rcon.actions_tracking.context import (
     SPAWN_POINT_RADIUS,
     Gain,
     PollContext,
+    SpawnLedger,
     distance,
 )
 from rcon.actions_tracking.detectors.base import ActionDetector
@@ -153,6 +154,45 @@ class GarrisonDetector(ActionDetector):
             if pid in builders
         }
         return decisions
+
+    def live(self, ledger: SpawnLedger, names: dict[str, str]) -> list[dict]:
+        """Garrisons to draw on the live map: candidates, and confirmed ones still in use.
+
+        Destruction is not observable: a confirmed garrison is shown while it remains a known spawn
+        point of its builder, i.e. until nobody spawned on it for ``SPAWN_POINT_TTL``.
+        """
+        result = []
+        for candidate in self.candidates:
+            result.append(
+                self._live(candidate, candidate["player_id"], "candidate", None, names)
+            )
+        for player_id, built in self.garrisons.items():
+            points = ledger.of(player_id)
+            for garrison in built:
+                seen = [
+                    p["last_ts"]
+                    for p in points
+                    if distance(p["x"], p["y"], garrison["x"], garrison["y"])
+                    <= SPAWN_POINT_RADIUS
+                ]
+                if seen:
+                    result.append(
+                        self._live(garrison, player_id, "confirmed", max(seen), names)
+                    )
+        return result
+
+    @staticmethod
+    def _live(item, player_id, status, last_seen, names) -> dict:
+        return {
+            "x": item["x"],
+            "y": item["y"],
+            "team": item["team"],
+            "status": status,
+            "builder_id": player_id,
+            "builder_name": names.get(player_id, player_id),
+            "built_at": item["ts"],
+            "last_seen": last_seen,
+        }
 
     def finalize(self, end_ts: float, names: dict[str, str]) -> list[Decision]:
         return [

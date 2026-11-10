@@ -139,6 +139,28 @@ function demoScore() {
   };
 }
 
+// Garrisons as detected by the actions tracking: confirmed (teammates spawned on them) or candidates.
+function demoGarrisons() {
+  const now = Date.now() / 1000;
+  const garrison = (spot, team, status, builder, minutesAgo) => ({
+    x: SPAWN_POINTS.find((point) => point.name === spot).x + 1500,
+    y: SPAWN_POINTS.find((point) => point.name === spot).y + 1500,
+    team,
+    status,
+    builder_id: builder,
+    builder_name: builder,
+    built_at: now - minutesAgo * 60,
+    last_seen: status === "confirmed" ? now - 40 : null,
+  });
+  return [
+    garrison("Ruins", "allies", "confirmed", "grmxque", 12),
+    garrison("Derailed Train", "allies", "confirmed", "tartanpion", 7),
+    garrison("Pumping Station", "allies", "candidate", "martinmatin", 1),
+    garrison("Rail Crossing", "axis", "confirmed", "Hans", 9),
+    garrison("Customs", "axis", "candidate", "Fritz", 2),
+  ];
+}
+
 export function demoLiveMap() {
   step();
   const score = demoScore();
@@ -147,7 +169,13 @@ export function demoLiveMap() {
     ...sector,
     owner: index < score.allied ? "allies" : "axis",
   }));
-  return structuredClone({ layer: { ...LAYER, sectors }, score, players, match_start_ms: startedAt });
+  return structuredClone({
+    layer: { ...LAYER, sectors },
+    score,
+    players,
+    garrisons: demoGarrisons(),
+    match_start_ms: startedAt,
+  });
 }
 
 export function demoPlayerLogs(playerName) {

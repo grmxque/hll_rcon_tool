@@ -7,6 +7,8 @@ Everything here is a pure transformation of data CRCON already fetches:
   live map adds no RCON traffic;
 * score and remaining time come from ``Rcon.get_gamestate`` (also cached ~2 s);
 * map geometry (grid, sectors) comes from ``hllrcon``'s static layer data.
+* garrisons come from the actions tracking state of the match in Redis
+  (``rcon.actions_tracking``), when it is enabled.
 
 Strongpoints are not shown: the game server has no command to read the active
 objectives of the match in progress.
@@ -23,6 +25,7 @@ from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict
 import hllrcon
 from hllrcon.data.maps import CardinalDirection
 
+from rcon.actions_tracking.tracker import live_garrisons
 from rcon.game.registry import game_switch
 from rcon.types import GameEnum
 from rcon.utils import MapsHistory
@@ -95,10 +98,28 @@ class LiveMapPlayer(TypedDict):
     clan_tag: NotRequired[str]
 
 
+class LiveMapGarrison(TypedDict):
+    """A garrison detected by the actions tracking (``rcon.actions_tracking``)."""
+
+    x: float
+    y: float
+    team: str | None
+    #: "candidate": detected from the builder's score, not confirmed yet (abilities and supplies
+    #: consumed give the same points); "confirmed": teammates spawned on it.
+    status: Literal["candidate", "confirmed"]
+    builder_id: str
+    builder_name: str
+    #: Epoch seconds.
+    built_at: float
+    #: Last spawn on it (epoch seconds), confirmed garrisons only.
+    last_seen: float | None
+
+
 class LiveMap(TypedDict):
     layer: LiveMapLayer | None
     score: LiveMapScore | None
     players: list[LiveMapPlayer]
+    garrisons: list[LiveMapGarrison]
     #: Start of the match in progress (epoch ms), used to keep only its log lines.
     match_start_ms: int | None
 
@@ -301,6 +322,7 @@ def build_live_map(
     allied_faction: str | None = None,
     axis_faction: str | None = None,
     match_start: int | None = None,
+    garrisons: list[LiveMapGarrison] | None = None,
 ) -> LiveMap:
     """Assemble the live map. ``match_start`` is the match start in epoch seconds."""
     score = build_score(gamestate, allied_faction, axis_faction)
@@ -312,6 +334,7 @@ def build_live_map(
         ),
         "score": score,
         "players": [build_player(p) for p in _team_view_players(team_view)],
+        "garrisons": garrisons or [],
         "match_start_ms": match_start * 1000 if match_start else None,
     }
 
@@ -338,6 +361,12 @@ def live_map_for(rcon: "Rcon") -> LiveMap:
         logger.exception("Live map: could not read the game state")
         gamestate = None
     match = current_match()
+    match_start = match.get("start") if match else None
+    try:
+        garrisons = live_garrisons(match_start)
+    except Exception:
+        logger.exception("Live map: could not read the detected garrisons")
+        garrisons = []
     return build_live_map(
         rcon.get_team_view(),
         layer.id,
@@ -345,5 +374,6 @@ def live_map_for(rcon: "Rcon") -> LiveMap:
         gamestate=gamestate,
         allied_faction=layer.map.allies.name,
         axis_faction=layer.map.axis.name,
-        match_start=match.get("start") if match else None,
+        match_start=match_start,
+        garrisons=garrisons,
     )

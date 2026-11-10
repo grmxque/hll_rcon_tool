@@ -201,6 +201,20 @@ def final_actions(
     return engine.summary()
 
 
+def live_garrisons(map_start: int | None) -> list[dict]:
+    """Garrison candidates and confirmed garrisons of the running match (live map)."""
+    if not map_start:
+        return []
+    config = load_config()
+    if not config.actions_tracking_enabled:
+        return []
+    state = _load_state(get_redis_client(), map_start)
+    if state is None:
+        return []
+    engine = make_engine(config, state)
+    return engine.detectors["garrison"].live(engine.spawns, engine.names)
+
+
 def stored_decisions(map_start: int) -> list[dict]:
     return [
         json.loads(d)
