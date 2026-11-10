@@ -122,6 +122,57 @@ def test_credits_split_over_two_polls_confirm(match):
     assert match.garrisons("off") == 1
 
 
+def test_credit_one_poll_after_the_spawn_confirms(match):
+    build(match, "off", GARRISON)
+    match.die("b0", "b1")
+    match.idle(15)
+    match.spawn(["b0", "b1"], at=GARRISON)
+    match.poll()  # the credits come with the next poll
+    match.gain("off", 6)
+    match.poll()
+    assert match.garrisons("off") == 1
+
+
+def test_wave_on_a_garrison_while_building_the_next_one(match):
+    build(match, "off", GARRISON)
+    match.move("off", (1200.0, 800.0))
+    match.die("b0", "b1")
+    match.idle(15)
+    match.spawn(["b0", "b1"], at=GARRISON)
+    match.gain("off", 50 + 6)  # second garrison + the wave on the first one
+    match.poll()
+    confirm(match, "off", (1200.0, 800.0), team=("b2",))
+    assert match.garrisons("off") == 2
+
+
+def test_two_candidates_next_to_each_other_count_once(match):
+    match.gain("off", 50)  # someone consumed his supplies
+    match.poll()
+    match.move("off", (910.0, 900.0))
+    match.poll()
+    match.gain("off", 50)  # his garrison, 10 m away
+    match.poll()
+    confirm(match, "off", (905.0, 900.0))
+    confirm(match, "off", (905.0, 900.0), team=("b2", "b3"))
+    match.idle(310)
+    assert match.garrisons("off") == 1
+
+
+def test_commander_ability_at_the_hq_at_match_start(match):
+    match.move("cmd", HQ)
+    match.poll()
+    match.gain("cmd", 50)  # ability before anybody spawned at the HQ
+    match.poll()
+    squad_b = [f"b{i}" for i in range(6)]
+    wave(match, HQ, team=squad_b)  # HQ spawns credit nobody
+    wave(match, HQ, team=squad_b)
+    # His real garrison elsewhere (not yet known) credits him as much as a part of an HQ wave.
+    build(match, "cmd", (1500.0, 300.0))
+    wave(match, HQ, team=squad_b, credited="cmd", extra=-12)
+    match.idle(310)
+    assert match.garrisons("cmd") == 0
+
+
 # 2
 def test_garrison_with_simultaneous_spawn_credits(match):
     match.die("a0", "b0")
@@ -610,7 +661,7 @@ def test_simulated_matches_error_rates():
     # Garrisons nobody spawned on within 5 minutes are not countable, by design. Among the
     # others, misses come from spawn waves mixed with other gains of the builder.
     assert result["garrison_fp"] <= 1
-    assert result["garrison_fn_used"] <= 0.12 * result["garrison_used"]
+    assert result["garrison_fn_used"] <= 0.05 * result["garrison_used"]
     assert result["node_fn"] <= 1
     assert result["node_fp"] <= 1  # repair station in the last 150 s of a match
 
@@ -618,4 +669,5 @@ def test_simulated_matches_error_rates():
 def test_simulated_matches_with_an_outage():
     result = simulate(range(12), outage=(600, 690))
     assert result["garrison_fp"] <= 1
-    assert result["garrison_fn_used"] <= 0.18 * result["garrison_used"]
+    # Garrisons built during the outage cannot be confirmed (their position is unknown).
+    assert result["garrison_fn_used"] <= 0.11 * result["garrison_used"]

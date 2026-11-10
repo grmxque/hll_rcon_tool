@@ -227,7 +227,9 @@ class Simulation:
         owner.support += 50
 
     def _garrison_spot_free(self, player: SimPlayer) -> bool:
-        return all(
+        """200 m from the team's garrisons, and away from the HQ (a garrison there is useless)."""
+        hq_x, hq_y = self.hq[player.team]
+        return math.hypot(player.x - hq_x, player.y - hq_y) >= 100 and all(
             math.hypot(player.x - x, player.y - y) >= 200
             for _, team, x, y, _built in self.garrisons
             if team == player.team
