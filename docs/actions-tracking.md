@@ -66,8 +66,14 @@ between two polls with the score sources that can produce it, within what the ga
 ## Garrisons
 
 Only players whose role was in `garrison_builder_roles` at the previous poll are analysed (changing class
-requires dying, so the role of the construction is the role before). Default: `officer` (HLL), `squadleader`
-(HLL Vietnam). The commander is excluded: several of his abilities give exactly +50.
+requires dying, so the role of the construction is the role before). Default: `officer` (squad leaders) and
+`armycommander`. The roles are validated against the HLL role catalog.
+
+**Commander.** Several of his abilities give exactly +50 (Encouraged, Airhead, Final Stand, Recon Plane,
+Reinforce, Supply Drop, Ammo Drop), like a garrison. His construction-like gains are therefore never counted
+directly: they wait (pending, 3 minutes) for one confirmation, and are rejected without it. Within 200 m of a
+standing friendly garrison or of another garrison awaiting confirmation, a commander gain is not a garrison
+(an ability used while standing on his own garrison). A data gap never credits him a garrison.
 
 **Spawns.** A teammate spawned when they come back alive after being dead or on the deployment screen, unless
 they are within 25 m of where they went down without a new death (revive), or when their deaths increase with
@@ -104,9 +110,14 @@ When both fit (for example 10 spawns of 5 = 50), in this order:
 4. those spawns came from **another builder's spawn point**: garrison;
 5. the same spot already gave this player an ambiguous gain: it is their spawn point, both are settled as no
    garrison;
-6. otherwise **pending** for 3 minutes: confirmed when teammates later spawn at the build position, rejected
-   when the H0 spawns turn out to be on this player's spawn point. Without evidence, default: garrison if the
-   player was stationary (moved less than 20 m), none if they were moving.
+6. otherwise **pending** for 3 minutes, then confirmed or rejected (below). Without evidence, default:
+   garrison if the player was stationary (moved less than 20 m), none if they were moving.
+
+**Confirmation of a pending garrison.** Teammates spawn within 50 m of the build position **and** the
+builder's support gain of that poll matches their spawn credits (+5 squad member, +3 other teammate, at most
+15 other points). Only the owner of a spawn point gets credits, so HQ spawns next to a commander confirm
+nothing. Spawns on a spawn point of the builder known before the pending case never confirm it. A pending
+case is rejected when its H0 spawns turn out to be on the builder's spawn point.
 
 Builders are processed in this order: unambiguous ones first, then those whose spawns are on their own spawn
 point, so that they claim their spawn credits before the ambiguous ones are analysed.
@@ -189,7 +200,10 @@ passive production stream (the nodes keep producing after a class change).
   claimants of spawn credits.
 - Constructions before the first poll of the tracking (CRCON started mid-match) are invisible, except nodes
   found through their passive production.
-- HLL Vietnam (`hllv`) uses the same table and rules: not validated.
+- A commander ability used during a spawn wave on a point right next to him that credits him exactly
+  (simulation: about one false garrison in ten matches); a commander garrison nobody spawns on within 3 minutes
+  is missed (simulation: about 16 % of his garrisons).
+- HLL (WW2) only.
 
 ## Tests
 

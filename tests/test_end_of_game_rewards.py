@@ -304,6 +304,21 @@ def test_invalid_settings_are_rejected(values):
         Config(**values)
 
 
+def test_builder_roles_default_to_squad_leaders_and_commander():
+    cfg = Config()
+    assert cfg.garrison_builder_roles == ["officer", "armycommander"]
+    assert cfg.node_builder_roles == ["engineer"]
+    assert Config(garrison_builder_roles=["spotter"]).garrison_builder_roles == [
+        "spotter"
+    ]
+
+
+@pytest.mark.parametrize("role", ["squadleader", "foo"])
+def test_unknown_builder_roles_are_rejected(role):
+    with pytest.raises(ValidationError):
+        Config(garrison_builder_roles=["officer", role])
+
+
 def test_defaults_match_the_original_plugin():
     cfg = Config()
     assert not cfg.enabled

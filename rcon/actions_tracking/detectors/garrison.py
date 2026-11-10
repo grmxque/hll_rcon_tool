@@ -18,6 +18,7 @@ from __future__ import annotations
 import math
 
 from rcon.actions_tracking.context import (
+    MAX_POLL_INTERVAL,
     SPAWN_POINT_RADIUS,
     SPAWN_POINT_TTL,
     Gain,
@@ -38,6 +39,12 @@ from rcon.actions_tracking.model import (
 from rcon.actions_tracking.rules import ScoreTable
 
 STATIONARY_DISTANCE = 2_000  # moved less than 20 m during the poll interval
+# Several commander abilities give +50 support, like a garrison: the commander's garrisons only count
+# once teammates spawn on them.
+EVIDENCE_REQUIRED_ROLES = frozenset({"armycommander"})
+EVIDENCE_REQUIRED = "confirmation required (commander abilities give +50 too)"
+# Other income tolerated besides the spawn credits that confirm a garrison (outpost, marking).
+CONFIRMATION_TOLERANCE = 15
 PENDING_SECONDS = 180.0
 INCOME_WINDOW_SECONDS = 600.0
 MIN_INCOME_OBSERVATION_SECONDS = 120.0
@@ -75,7 +82,7 @@ def min_residual(
 
 class GarrisonDetector(ActionDetector):
     action = "garrison"
-    default_roles = ("officer", "squadleader")
+    default_roles = ("officer", "armycommander")
 
     def load(self, state: dict) -> None:
         # Per builder: {ts, x, y, team, standing, last_seen, gap?}
@@ -296,6 +303,13 @@ class GarrisonDetector(ActionDetector):
                 )
             return []
 
+        if neighbours and prev["role"] in EVIDENCE_REQUIRED_ROLES:
+            # The spawns that would confirm it are those of the garrison already standing there.
+            self._credit(ctx, sample, analysis, False, learn=h0[0] == 0)
+            return reported(
+                "a friendly garrison already stands within 200 m; "
+                f"{EVIDENCE_REQUIRED}, impossible here"
+            )
         if h1[0] == 0 and h0[0] > 0:
             self._credit(ctx, sample, analysis, True, learn=True)
             reason = "only a construction explains the gain"
@@ -303,7 +317,7 @@ class GarrisonDetector(ActionDetector):
                 reason += (
                     "; it replaces a friendly garrison within 200 m, presumed destroyed"
                 )
-            return self._add(ctx, sample, analysis, decision, reason)
+            return self._add(ctx, gain, analysis, decision, reason)
         if h1[0] > 0 and h0[0] == 0:
             self._credit(ctx, sample, analysis, False, learn=True)
             return reported("spawn credits / outpost / marking explain the gain")
@@ -319,7 +333,7 @@ class GarrisonDetector(ActionDetector):
                 self._credit(ctx, sample, analysis, True, learn=False)
                 return self._add(
                     ctx,
-                    sample,
+                    gain,
                     analysis,
                     decision,
                     f"{h1[0]} unexplained points with a construction, {h0[0]} without",
@@ -345,7 +359,7 @@ class GarrisonDetector(ActionDetector):
             self._credit(ctx, sample, analysis, True, learn=False)
             return self._add(
                 ctx,
-                sample,
+                gain,
                 analysis,
                 decision,
                 "the spawns that could explain the gain came from other builders' spawn points",
@@ -387,27 +401,68 @@ class GarrisonDetector(ActionDetector):
             and distance(sample.x, sample.y, prev["x"], prev["y"])
             <= STATIONARY_DISTANCE
         )
-        x, y = analysis["position"]
-        self.pending.append(
-            {
-                "player_id": sample.player_id,
-                "ts": ts,
-                "x": x,
-                "y": y,
-                "team": sample.team,
-                "deadline": ts + PENDING_SECONDS,
-                "default": COUNTED if stationary else NONE,
-                "h0_spawns": [[s["x"], s["y"]] for s in claimable],
-                "gain": gain.points,
-            }
-        )
+        if prev["role"] in EVIDENCE_REQUIRED_ROLES:
+            default, default_reason = NONE, EVIDENCE_REQUIRED
+        elif stationary:
+            default, default_reason = (
+                COUNTED,
+                "default for an ambiguous gain (player stationary)",
+            )
+        else:
+            default, default_reason = (
+                NONE,
+                "default for an ambiguous gain (player moving)",
+            )
+        self._open_pending(ctx, gain, analysis, claimable, default, default_reason)
         return decision(
             PENDING,
             "spawns of unknown origin give the same gain; waiting for later evidence "
-            f"(default: {'garrison, player stationary' if stationary else 'none, player moving'})",
+            f"({default_reason})",
         )
 
-    def _add(self, ctx, sample: PlayerSample, analysis: dict, decision, reason: str):
+    def _open_pending(
+        self,
+        ctx: PollContext,
+        gain: Gain,
+        analysis: dict,
+        h0_spawns: list[dict],
+        default: str,
+        default_reason: str,
+    ) -> None:
+        x, y = analysis["position"]
+        self.pending.append(
+            {
+                "player_id": gain.sample.player_id,
+                "ts": ctx.ts,
+                "x": x,
+                "y": y,
+                "team": gain.sample.team,
+                "deadline": ctx.ts + PENDING_SECONDS,
+                "default": default,
+                "default_reason": default_reason,
+                "h0_spawns": [[s["x"], s["y"]] for s in h0_spawns],
+                "gain": gain.points,
+            }
+        )
+
+    def _add(self, ctx, gain: Gain, analysis: dict, decision, reason: str):
+        """Count the garrison, or wait for teammates to spawn on it (commander)."""
+        sample = gain.sample
+        if gain.prev["role"] in EVIDENCE_REQUIRED_ROLES:
+            x, y = analysis["position"]
+            if any(
+                p["team"] == sample.team
+                and distance(x, y, p["x"], p["y"]) < self.rules.garrison_min_spacing
+                for p in self.pending
+            ):
+                # Garrisons are 200 m apart: the gain is not a second one (ability used while
+                # standing on a garrison still awaiting confirmation).
+                return decision(
+                    NONE,
+                    "another garrison awaiting confirmation stands within 200 m",
+                )
+            self._open_pending(ctx, gain, analysis, [], NONE, EVIDENCE_REQUIRED)
+            return decision(PENDING, f"{reason}; {EVIDENCE_REQUIRED}")
         x, y = analysis["position"]
         for replaced in analysis["neighbours"]:
             replaced["standing"] = False
@@ -465,6 +520,10 @@ class GarrisonDetector(ActionDetector):
             allowance = min(worst_case, 1.5 * rate * gain.interval + RESIDUAL_TOLERANCE)
             basis = f"{rate * 60:.0f} pts/min observed before the gap"
         most = 1 + int(gain.interval // self.rules.garrison_min_seconds_between)
+        if prev["role"] in EVIDENCE_REQUIRED_ROLES:
+            most = (
+                0  # the position of a garrison built during a gap cannot be confirmed
+            )
         count = 0
         while (
             count < most
@@ -536,23 +595,16 @@ class GarrisonDetector(ActionDetector):
 
     def _settle_pending(self, ctx: PollContext) -> list[Decision]:
         decisions = []
-        new_spawns = ctx.spawns.at(ctx.ts)
         for pending in list(self.pending):
             own = ctx.spawns.of(pending["player_id"])
             learned_after = [p for p in own if p["since"] > pending["ts"]]
-            if any(
-                s["team"] == pending["team"]
-                and s["player_id"] != pending["player_id"]
-                and distance(s["x"], s["y"], pending["x"], pending["y"])
-                <= SPAWN_POINT_RADIUS
-                for s in new_spawns
-            ):
+            if self._credited_spawns_at(ctx, pending):
                 decisions.append(
                     self._resolve(
                         pending,
                         ctx.ts,
                         COUNTED,
-                        "teammates later spawned at the build position",
+                        "teammates later spawned at the build position and credited the builder",
                         ctx.names,
                         ctx.spawns,
                     )
@@ -580,6 +632,43 @@ class GarrisonDetector(ActionDetector):
                 )
         return decisions
 
+    def _credited_spawns_at(self, ctx: PollContext, pending: dict) -> bool:
+        """Teammates spawned at the build position and the builder's gain is their spawn credits.
+
+        Only the builder of a spawn point gets credits: spawns at the HQ, next to a commander, give
+        nothing to anybody, so the gain must match the credits, not merely exceed them.
+        """
+        player_id = pending["player_id"]
+        gain = ctx.gains.get(player_id)
+        builder = ctx.current.get(player_id)
+        if gain is None or builder is None or ctx.ts <= pending["ts"]:
+            return False
+        known_before = [
+            p for p in ctx.spawns.of(player_id) if p["since"] < pending["ts"]
+        ]
+        if ctx.spawns.near(pending, known_before):
+            return False  # spawns there are those of a spawn point that already existed
+        after = gain.prev["ts"] - MAX_POLL_INTERVAL / 4
+        nearby = [
+            s
+            for s in ctx.spawns.spawns
+            if s["team"] == pending["team"]
+            and s["player_id"] != player_id
+            and s["credited_to"] in (None, player_id)
+            and after < s["ts"] <= ctx.ts
+            and distance(s["x"], s["y"], pending["x"], pending["y"])
+            <= SPAWN_POINT_RADIUS
+        ]
+        credits = sum(
+            self.table.spawn_unit
+            if s["unit_id"] == builder.unit_id
+            else self.table.spawn_team
+            for s in nearby
+        )
+        return (
+            bool(nearby) and credits <= gain.points <= credits + CONFIRMATION_TOLERANCE
+        )
+
     def _resolve_default(
         self,
         pending: dict,
@@ -588,13 +677,11 @@ class GarrisonDetector(ActionDetector):
         names: dict[str, str],
         ledger: SpawnLedger | None = None,
     ) -> Decision:
-        stationary = pending["default"] == COUNTED
         return self._resolve(
             pending,
             ts,
             pending["default"],
-            f"{why}: default for an ambiguous gain "
-            f"({'player stationary' if stationary else 'player moving'})",
+            f"{why}: {pending.get('default_reason', 'default for an ambiguous gain')}",
             names,
             ledger,
         )

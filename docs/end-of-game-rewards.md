@@ -31,8 +31,9 @@ for the method, its limits and how to validate it before enabling these rewards.
 - TOP 3 garrison ties: the player who reached the count first in the match wins, then the lowest player ID.
   At most 3 winners; fewer when fewer players built a garrison.
 - Each category gives its days at most once per player and per match.
-- `garrison_builder_roles` (default `officer`, `squadleader`) and `node_builder_roles` (default `engineer`) are
-  the roles analysed.
+- `garrison_builder_roles` (default `officer`, `armycommander`) and `node_builder_roles` (default `engineer`)
+  are the roles analysed. The commander's garrisons only count once teammates spawn on them, because several of
+  his abilities give the same +50.
 
 - Every player present in the final stats can be rewarded, connected or not. Only connected players are
   messaged.

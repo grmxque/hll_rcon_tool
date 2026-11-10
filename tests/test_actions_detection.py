@@ -266,6 +266,68 @@ def test_commander_abilities_are_not_constructions(match):
     assert match.nodes("cmd") == 0
 
 
+def test_commander_ability_waits_for_spawns_then_is_rejected(match):
+    match.gain("cmd", 50)
+    decisions = match.poll()
+    assert verdicts(decisions, "cmd") == [("garrison", "pending")]
+    assert "commander abilities give +50 too" in decisions[0].reason
+    match.idle(200)
+    assert match.garrisons("cmd") == 0
+    assert ("garrison", "rejected") in verdicts(match.decisions, "cmd")
+
+
+def test_commander_garrison_confirmed_by_teammates_spawning_on_it(match):
+    match.move("cmd", (1300.0, 1300.0))
+    match.poll()
+    match.gain("cmd", 50)
+    match.poll()
+    squad_b = ["b0", "b1", "b2", "b3"]
+    match.die(*squad_b)
+    match.idle(15)
+    match.spawn(squad_b, at=(1302.0, 1302.0))
+    match.gain("cmd", 12)  # +3 per teammate spawning on the commander's garrison
+    match.poll()
+    assert match.garrisons("cmd") == 1
+    assert ("garrison", "confirmed") in verdicts(match.decisions, "cmd")
+
+
+def test_commander_at_the_hq_is_not_confirmed_by_hq_spawns(match):
+    match.move("cmd", HQ)
+    match.poll()
+    match.gain("cmd", 50)  # ability
+    match.poll()
+    squad_b = [f"b{i}" for i in range(10)]
+    match.die(*squad_b)
+    match.idle(15)
+    match.spawn(squad_b, at=HQ)  # HQ spawns credit nobody
+    match.poll()
+    match.die(*squad_b)
+    match.idle(15)
+    match.spawn(squad_b, at=HQ)
+    match.gain("cmd", 50)  # another ability during the wave
+    match.poll()
+    match.idle(200)
+    assert match.garrisons("cmd") == 0
+
+
+def test_commander_ability_on_his_own_garrison_is_not_a_second_one(match):
+    match.move("cmd", (1300.0, 1300.0))
+    match.poll()
+    match.gain("cmd", 50)  # real garrison
+    match.poll()
+    match.idle(20)
+    match.gain("cmd", 50)  # ability, standing on it
+    decisions = match.poll()
+    assert verdicts(decisions, "cmd") == [("garrison", "none")]
+    squad_b = ["b0", "b1", "b2"]
+    match.die(*squad_b)
+    match.idle(15)
+    match.spawn(squad_b, at=(1301.0, 1301.0))
+    match.gain("cmd", 9)
+    match.poll()
+    assert match.garrisons("cmd") == 1
+
+
 def test_outpost_passive_income_is_not_a_garrison(match):
     for _ in range(8):
         match.idle(57)
@@ -556,10 +618,15 @@ def test_finalize_is_final(match):
 
 
 def test_roles_are_configurable(match):
-    match.engine.detectors["garrison"].roles = frozenset({"officer", "armycommander"})
+    match.engine.detectors["garrison"].roles = frozenset({"officer", "rifleman"})
+    match.gain("a0", 50)
+    match.poll()
+    assert match.garrisons("a0") == 1
     match.gain("cmd", 50)
     match.poll()
-    assert match.garrisons("cmd") == 1
+    assert (
+        match.engine.detectors["garrison"].pending == []
+    )  # commander no longer analysed
 
 
 def test_gap_uses_the_income_observed_before_it(match):
@@ -610,9 +677,11 @@ def simulate(seeds, **kwargs):
 def test_simulated_matches_error_rates():
     result = simulate(range(12))
     garrisons = result["garrison_tp"] + result["garrison_fn"]
-    assert result["garrison_fp"] == 0
-    # Misses: mostly garrisons destroyed and rebuilt in place within 30 s.
-    assert result["garrison_fn"] <= 0.04 * garrisons
+    # False positives: a commander ability used during an HQ wave right next to him (about one
+    # match in ten). Misses: garrisons destroyed and rebuilt in place within 30 s, commander
+    # garrisons nobody spawned on.
+    assert result["garrison_fp"] <= 0.02 * garrisons
+    assert result["garrison_fn"] <= 0.08 * garrisons
     assert result["node_fn"] == 0
     assert result["node_fp"] <= 1  # repair station in the last 150 s of a match
 
@@ -620,5 +689,5 @@ def test_simulated_matches_error_rates():
 def test_simulated_matches_with_an_outage():
     result = simulate(range(12), outage=(600, 690))
     garrisons = result["garrison_tp"] + result["garrison_fn"]
-    assert result["garrison_fp"] <= 0.01 * garrisons
-    assert result["garrison_fn"] <= 0.05 * garrisons
+    assert result["garrison_fp"] <= 0.02 * garrisons
+    assert result["garrison_fn"] <= 0.09 * garrisons
