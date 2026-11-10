@@ -141,17 +141,36 @@ def test_expiration_rules():
 
 @pytest.mark.parametrize(
     "language,expected",
-    [("en", "YOU WON 6 DAYS OF VIP!"), ("fr", "TU AS GAGNÉ 6 JOURS DE VIP!")],
+    [
+        (
+            "en",
+            [
+                "█ END OF GAME █ +4 d/TOP",
+                "Offense : Dave (5)",
+                "▒ Dave ▒",
+                "KILLS 80 (+2 d) · STREAK 0",
+                "K/MIN 0.71 · K/D 0",
+                "YOU WON 6 DAYS OF VIP!",
+            ],
+        ),
+        (
+            "fr",
+            [
+                "█ FIN DE PARTIE █ +4 j/TOP",
+                "Attaque : Dave (5)",
+                "▒ Dave ▒",
+                "KILLS 80 (+2 j) · SÉRIE 0",
+                "K/MIN 0.71 · K/D 0",
+                "TU AS GAGNÉ 6 JOURS DE VIP!",
+            ],
+        ),
+    ],
 )
 def test_player_message_layout(language, expected):
     dave = player("dave", kills=80, kills_per_minute=0.71234, offense=5)
     cfg = config(language=language, top_categories=["offense"])
     rewards = compute_rewards([dave], cfg, {}, 60)
-    message = build_player_message(dave, rewards, cfg)
-    assert message.splitlines()[0] in ("█ END OF GAME █", "█ FIN DE PARTIE █")
-    assert "+4" in message and "(+2" in message
-    assert "0.71" in message
-    assert message.splitlines()[-1] == expected
+    assert build_player_message(dave, rewards, cfg).splitlines() == expected
 
 
 def test_message_without_rewards_shows_no_days():
@@ -295,3 +314,243 @@ def test_defaults_match_the_original_plugin():
     assert cfg.kills_per_minute_threshold == 0.75
     assert (cfg.kill_death_ratio_threshold, cfg.kill_death_ratio_min_kills) == (1.5, 30)
     assert cfg.fidelity_reward_days == 0
+
+
+# Construction categories (TOP 3 garrison builders, node builders)
+from rcon.actions_tracking.model import PlayerActions
+
+
+def built(player_id, garrisons=0, nodes=0, reached=0.0, name=None):
+    counts = {"garrison": garrisons, "node": nodes}
+    counts = {action: count for action, count in counts.items() if count}
+    return PlayerActions(
+        player_id=player_id,
+        name=name or player_id.title(),
+        counts=counts,
+        reached={action: reached for action in counts},
+    )
+
+
+def actions(*builders):
+    return {b.player_id: b for b in builders}
+
+
+def construction_config(**values):
+    return config(
+        **(
+            {
+                "top_categories": [],
+                "individual_reward_days": 0,
+                "garrison_rewards_enabled": True,
+                "node_rewards_enabled": True,
+            }
+            | values
+        )
+    )
+
+
+def test_top_3_garrison_builders_get_one_day_each():
+    builders = actions(
+        built("alice", garrisons=5, reached=300),
+        built("bob", garrisons=2, reached=100),
+        built("carol", garrisons=4, reached=200),
+        built("dave", garrisons=1, reached=50),
+    )
+    rewards = compute_rewards([], construction_config(), {}, 60, builders)
+    assert [b.player_id for b in rewards.top_garrison_builders] == [
+        "alice",
+        "carol",
+        "bob",
+    ]
+    assert rewards.days == {"alice": 1, "carol": 1, "bob": 1}
+    assert rewards.reasons["alice"] == ["top_garrison"]
+
+
+def test_garrison_ties_go_to_the_first_to_reach_the_count():
+    builders = actions(
+        built("alice", garrisons=3, reached=900),
+        built("bob", garrisons=3, reached=400),
+        built("carol", garrisons=3, reached=400),  # same time as bob: player ID decides
+        built("dave", garrisons=3, reached=100),
+    )
+    rewards = compute_rewards([], construction_config(), {}, 60, builders)
+    assert [b.player_id for b in rewards.top_garrison_builders] == [
+        "dave",
+        "bob",
+        "carol",
+    ]
+    assert "alice" not in rewards.days
+
+
+def test_fewer_than_three_builders_and_zero_constructions():
+    builders = actions(built("alice", garrisons=1), built("bob", nodes=2))
+    rewards = compute_rewards([], construction_config(), {}, 60, builders)
+    assert [b.player_id for b in rewards.top_garrison_builders] == ["alice"]
+    assert rewards.days == {"alice": 1, "bob": 1}
+    assert compute_rewards([], construction_config(), {}, 60, {}).days == {}
+    assert compute_rewards([], construction_config(), {}, 60, None).days == {}
+
+
+def test_every_node_builder_gets_one_day_whatever_the_count():
+    builders = actions(built("alice", nodes=1), built("bob", nodes=3))
+    rewards = compute_rewards([], construction_config(), {}, 60, builders)
+    assert rewards.days == {"alice": 1, "bob": 1}
+    assert {b.player_id for b in rewards.node_builders} == {"alice", "bob"}
+
+
+def test_construction_categories_can_be_disabled_or_configured():
+    builders = actions(built("alice", garrisons=2, nodes=1))
+    cfg = construction_config(garrison_rewards_enabled=False, node_reward_days=3)
+    rewards = compute_rewards([], cfg, {}, 60, builders)
+    assert rewards.days == {"alice": 3}
+    assert rewards.top_garrison_builders == []
+    rewards = compute_rewards(
+        [], construction_config(node_rewards_enabled=False), {}, 60, builders
+    )
+    assert rewards.days == {"alice": 1}
+
+
+def test_construction_rewards_follow_the_existing_eligibility_rules():
+    builders = actions(built("alice", garrisons=2, nodes=1), built("bob", nodes=1))
+    vips = {"bob": {"player_id": "bob", "vip_expiration": None}}  # unlimited VIP
+    cfg = construction_config(min_players_for_rewards=50)
+    assert compute_rewards([], cfg, vips, 10, builders).days == {}
+    cfg = construction_config(min_players_for_rewards=0, vip_rewards_enabled=False)
+    assert compute_rewards([], cfg, vips, 60, builders).days == {}
+    assert compute_rewards([], construction_config(), vips, 60, builders).days == {
+        "alice": 2
+    }
+
+
+def test_rewards_add_up_across_categories(stats):
+    builders = actions(built("carol", garrisons=4, nodes=2))
+    cfg = config(garrison_rewards_enabled=True, node_rewards_enabled=True)
+    rewards = compute_rewards(stats, cfg, {}, 60, builders)
+    # carol: best support (4) + garrison top 3 (1) + node builder (1)
+    assert rewards.days["carol"] == 6
+    assert rewards.reasons["carol"] == ["top_support", "top_garrison", "node_builder"]
+    # The historic rewards are unchanged.
+    assert rewards.days["alice"] == 4 and rewards.days["bob"] == 8
+
+
+def test_builder_who_left_before_the_end_is_rewarded(rcon, audit):
+    builders = actions(built("erin", garrisons=2, name="Erin"))
+    cfg = construction_config(discord_webhook_url="https://discord.com/api/webhooks/x")
+    process_end_of_game(rcon, cfg, [], now=NOW, actions=builders)
+    grants = {c.args[0]: c.args for c in rcon.add_vip.call_args_list}
+    assert grants["erin"][1] == "Erin - Top stats VIP"
+    row = audit[0].add.call_args.args[0]
+    assert '"reasons": ["top_garrison"]' in row.command_arguments
+    assert "Erin +1d [top_garrison]" in audit[1].call_args.kwargs["message"]
+
+
+def test_construction_rewards_in_dry_run(rcon, audit):
+    builders = actions(built("alice", garrisons=1))
+    process_end_of_game(
+        rcon, construction_config(dry_run=True), [], now=NOW, actions=builders
+    )
+    rcon.add_vip.assert_not_called()
+    assert audit[0].add.call_args.args[0].command_result == "dry_run"
+
+
+def worst_case_rewards(language):
+    long = "X" * 32
+    stats = [
+        player(
+            f"p{i}",
+            player=f"{long}{i}",
+            kills=100,
+            kills_streak=20,
+            kills_per_minute=1.5,
+            kill_death_ratio=3.2,
+            offense=1000 + i,
+            defense=1000 + i,
+            support=1000 + i,
+            combat=1000 + i,
+        )
+        for i in range(5)
+    ]
+    builders = actions(
+        *(
+            built(f"p{i}", garrisons=10 - i, nodes=3, name=f"{long}{i}")
+            for i in range(5)
+        )
+    )
+    cfg = config(
+        language=language, garrison_rewards_enabled=True, node_rewards_enabled=True
+    )
+    vips = {"p0": {"player_id": "p0", "vip_expiration": NOW + timedelta(days=3)}}
+    cfg = cfg.model_copy(update={"fidelity_reward_days": 1})
+    return stats, cfg, compute_rewards(stats, cfg, vips, 60, builders)
+
+
+@pytest.mark.parametrize("language", ["en", "fr"])
+def test_message_fits_a_console_in_the_worst_case(language):
+    stats, cfg, rewards = worst_case_rewards(language)
+    message = build_player_message(stats[0], rewards, cfg)
+    lines = message.splitlines()
+    assert len(lines) <= 16
+    assert all(len(line) <= 40 for line in lines), lines
+    assert lines[-1].startswith(("YOU WON", "TU AS GAGNÉ"))
+    assert any(
+        line.startswith(("GARRISONS 10 (+1", "GARNISONS 10 (+1")) for line in lines
+    )
+
+
+def test_message_with_constructions():
+    builders = actions(
+        built("alice", garrisons=5, reached=1),
+        built("bob", garrisons=4, reached=2),
+        built("carol", garrisons=3, reached=3, nodes=2),
+        built("dave", garrisons=1, reached=4, nodes=1),
+    )
+    cfg = construction_config(language="fr")
+    carol = player("carol")
+    rewards = compute_rewards([carol], cfg, {}, 60, builders)
+    assert build_player_message(carol, rewards, cfg).splitlines() == [
+        "█ FIN DE PARTIE █",
+        "▒ GARNISONS +1 j ▒",
+        "1. Alice (5)",
+        "2. Bob (4)",
+        "3. Carol (3)",
+        "Nodes +1 j : 2 constructeurs",
+        "▒ Carol ▒",
+        "KILLS 0 · SÉRIE 0",
+        "K/MIN 0 · K/D 0",
+        "GARNISONS 3 (+1 j) · NODES 2 (+1 j)",
+        "TU AS GAGNÉ 2 JOURS DE VIP!",
+    ]
+    dave = player("dave")
+    message = build_player_message(dave, rewards, cfg)
+    assert "GARNISONS 1 · NODES 1 (+1 j)" in message  # not in the top 3
+
+
+def test_message_sections_are_omitted_when_disabled_or_empty():
+    cfg = construction_config()
+    rewards = compute_rewards([player("alice")], cfg, {}, 60, {})
+    message = build_player_message(player("alice"), rewards, cfg)
+    assert "GARRISONS" not in message and "Nodes" not in message
+
+
+def test_match_end_passes_the_actions_of_the_ending_match(stats, rcon, monkeypatch):
+    red = FakeRedis()
+    monkeypatch.setattr(eog, "get_redis_client", lambda: red)
+    monkeypatch.setattr(eog, "get_server_number", lambda: "1")
+    monkeypatch.setattr(eog, "get_cached_live_game_stats", lambda: {"stats": stats})
+    monkeypatch.setattr(
+        Config, "load_from_db", classmethod(lambda cls: construction_config())
+    )
+    history = [{"start": 5_000, "end": 9_000}, {"start": 1_000, "end": 4_000}]
+    monkeypatch.setattr(eog, "MapsHistory", lambda: history)
+    final = Mock(return_value={"alice": built("alice", garrisons=1)})
+    monkeypatch.setattr(eog, "final_actions", final)
+    process = Mock()
+    monkeypatch.setattr(eog, "process_end_of_game", process)
+
+    eog.end_of_game_rewards_on_match_end(rcon, {"timestamp_ms": 4_000_000})
+    assert final.call_args.args[1:] == (1_000, 4_000)  # an older MATCH ENDED line
+    assert process.call_args.kwargs["actions"] == final.return_value
+
+    final.side_effect = RuntimeError("redis down")
+    eog.end_of_game_rewards_on_match_end(rcon, {"timestamp_ms": 9_000_000})
+    assert process.call_args.kwargs["actions"] == {}  # the other rewards still run
