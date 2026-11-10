@@ -118,7 +118,7 @@ class EndOfGameRewardsUserConfig(BaseUserConfig):
     garrison_builder_roles: list[str] = Field(
         default_factory=lambda: ["officer", "armycommander"],
         title="Garrison Builder Roles",
-        description="Roles able to build a garrison (officer = squad leader). Several commander abilities give the same +50 support as a garrison: a commander's garrison only counts once teammates spawn on it.",
+        description="Roles able to build a garrison (officer = squad leader). A garrison only counts once teammates spawn on it, since commander abilities and supplies consumed give the same +50.",
     )
     node_builder_roles: list[str] = Field(
         default_factory=lambda: ["engineer"],

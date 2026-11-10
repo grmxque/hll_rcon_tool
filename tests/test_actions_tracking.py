@@ -43,27 +43,46 @@ def config(monkeypatch):
     return current
 
 
-def players(**support):
-    return {
-        "players": {
-            player_id: {
-                "name": player_id.title(),
-                "team": "allies",
-                "unit_id": 0,
-                "role": "officer" if player_id.startswith("off") else "engineer",
-                "support": points,
-                "deaths": 0,
-                # 300 m apart: each one can build a garrison.
-                "world_position": {
-                    "x": 1000.0 + 30_000 * index,
-                    "y": 1000.0,
-                    "z": 10.0,
-                },
-            }
-            for index, (player_id, points) in enumerate(support.items())
-        },
-        "fail_count": 0,
+def players(mate=None, **support):
+    """Officers / engineers 300 m apart, plus a rifleman of another squad: far away (None), dead
+    ("dead") or just spawned at a position."""
+    result = {
+        player_id: {
+            "name": player_id.title(),
+            "team": "allies",
+            "unit_id": 0,
+            "role": "officer" if player_id.startswith("off") else "engineer",
+            "support": points,
+            "deaths": 0,
+            "world_position": {"x": 1000.0 + 30_000 * index, "y": 1000.0, "z": 10.0},
+        }
+        for index, (player_id, points) in enumerate(support.items())
     }
+    x, y = (500_000.0, 500_000.0) if mate is None else (0.0, 0.0)
+    if isinstance(mate, tuple):
+        x, y = mate
+    result["mate"] = {
+        "name": "Mate",
+        "team": "allies",
+        "unit_id": 1,
+        "role": "rifleman",
+        "support": 0,
+        "deaths": 0 if mate is None else 1,
+        "world_position": {"x": x, "y": y, "z": 0.0 if mate == "dead" else 10.0},
+    }
+    return {"players": result, "fail_count": 0}
+
+
+def build_and_confirm(rcon, start, officer="off", **others):
+    """The officer builds a garrison, then a teammate spawns on it (+3 for the officer)."""
+    tracker.observe_poll(rcon, MATCH, players(**{officer: 0}, **others), now=start)
+    tracker.observe_poll(rcon, MATCH, players(**{officer: 50}, **others), now=start + 3)
+    tracker.observe_poll(
+        rcon, MATCH, players("dead", **{officer: 50}, **others), now=start + 6
+    )
+    tracker.observe_poll(
+        rcon, MATCH, players((1000.0, 1000.0), **{officer: 53}, **others), now=start + 9
+    )
 
 
 def summary(red, config, end_ts=10_100):
@@ -72,21 +91,22 @@ def summary(red, config, end_ts=10_100):
 
 def test_detection_survives_a_restart_and_replayed_polls(red, config):
     rcon = Mock()
-    tracker.observe_poll(rcon, MATCH, players(off=0), now=10_003)
     # Each call reloads the state from Redis: the same as a log loop restart.
-    tracker.observe_poll(rcon, MATCH, players(off=50), now=10_006)
+    build_and_confirm(rcon, 10_003)
     tracker.observe_poll(rcon, MATCH, players(off=50), now=10_006)  # replayed poll
     tracker.observe_poll(rcon, MATCH, players(off=50), now=10_004)  # older poll
     assert summary(red, config)["off"].count("garrison") == 1
     decisions = tracker.stored_decisions(MATCH["start"])
-    assert [(d["kind"], d["verdict"]) for d in decisions] == [("garrison", "counted")]
-    assert decisions[0]["reason"] == "only a construction explains the gain"
+    assert [(d["kind"], d["verdict"]) for d in decisions] == [
+        ("garrison", "pending"),
+        ("garrison", "confirmed"),
+    ]
+    assert decisions[1]["reason"] == "teammates spawned on it and credited the builder"
 
 
 def test_each_match_has_its_own_state(red, config):
     rcon = Mock()
-    tracker.observe_poll(rcon, MATCH, players(off=0), now=10_003)
-    tracker.observe_poll(rcon, MATCH, players(off=50), now=10_006)
+    build_and_confirm(rcon, 10_003)
     next_match = {"start": 20_000, "end": None}
     tracker.observe_poll(rcon, next_match, players(off=0), now=20_003)
     assert tracker.final_actions(config["value"], 20_000, 20_100) == {}
@@ -133,8 +153,7 @@ def test_banner_after_a_new_construction(red, config, monkeypatch):
     config["value"] = settings(thanks_banner_enabled=True, language="fr")
     rcon = Mock()
     rcon.set_broadcast.return_value = "Bienvenue"
-    tracker.observe_poll(rcon, MATCH, players(off=0, off2=0), now=10_003)
-    tracker.observe_poll(rcon, MATCH, players(off=50, off2=0), now=10_006)
+    build_and_confirm(rcon, 10_003, off2=0)
     rcon.set_broadcast.assert_called_once_with(
         "Merci pour la construction de garnisons : Off (1)"
     )
@@ -142,8 +161,12 @@ def test_banner_after_a_new_construction(red, config, monkeypatch):
     [restore] = queue.enqueue_in.call_args_list
     assert restore.args[0].total_seconds() == 30
     assert restore.args[2] == "Bienvenue"
-    # Another construction within 5 minutes: no new banner.
-    tracker.observe_poll(rcon, MATCH, players(off=50, off2=50), now=10_009)
+    # Another garrison within 5 minutes: no new banner.
+    tracker.observe_poll(rcon, MATCH, players(off=53, off2=50), now=10_015)
+    tracker.observe_poll(rcon, MATCH, players("dead", off=53, off2=50), now=10_018)
+    tracker.observe_poll(
+        rcon, MATCH, players((31_000.0, 1000.0), off=53, off2=53), now=10_021
+    )
     assert summary(red, config)["off2"].count("garrison") == 1
     assert rcon.set_broadcast.call_count == 1
 
@@ -151,8 +174,8 @@ def test_banner_after_a_new_construction(red, config, monkeypatch):
 def test_banner_is_not_sent_in_dry_run(red, config, monkeypatch):
     config["value"] = settings(thanks_banner_enabled=True, dry_run=True)
     rcon = Mock()
-    tracker.observe_poll(rcon, MATCH, players(off=0), now=10_003)
-    tracker.observe_poll(rcon, MATCH, players(off=50), now=10_006)
+    build_and_confirm(rcon, 10_003)
+    assert summary(red, config)["off"].count("garrison") == 1
     rcon.set_broadcast.assert_not_called()
 
 
@@ -199,17 +222,17 @@ def test_recorded_snapshots_can_be_replayed(red, config, monkeypatch, tmp_path, 
     monkeypatch.setenv("LOGGING_PATH", str(tmp_path))
     config["value"] = settings(record_actions_snapshots=True)
     rcon = Mock()
-    tracker.observe_poll(rcon, MATCH, players(off=0, eng=0), now=10_003)
-    tracker.observe_poll(rcon, MATCH, players(off=50, eng=0), now=10_006)
-    tracker.observe_poll(rcon, MATCH, players(off=50, eng=90), now=10_009)
+    build_and_confirm(rcon, 10_003, eng=0)
+    tracker.observe_poll(rcon, MATCH, players(off=53, eng=90), now=10_015)
     path = tmp_path / "actions_snapshots" / "1_10000.jsonl"
-    assert len(path.read_text().splitlines()) == 3
+    assert len(path.read_text().splitlines()) == 5
     assert json.loads(path.read_text().splitlines()[0])["ts"] == 10_003
 
     assert cli.main(["replay", str(path)]) == 0
     output = capsys.readouterr().out
+    assert "garrison pending   Off (off) +50: a garrison explains the gain" in output
     assert (
-        "garrison counted   Off (off) +50: only a construction explains the gain"
+        "garrison confirmed Off (off) +50: teammates spawned on it and credited the builder"
         in output
     )
     assert "Off (off): garrison: 1" in output

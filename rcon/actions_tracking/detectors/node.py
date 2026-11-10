@@ -171,25 +171,37 @@ class NodeDetector(ActionDetector):
 
         best = None
         # Cost: prefer known passive ticks, then repairs, then new streams, then a construction.
-        for blueprint, built, known, new, repair in product(
+        for blueprint, built, supplies, known, new, repair in product(
+            (0, 1) if can_build else (0,),
             (0, 1) if can_build else (0,),
             (0, 1) if can_build else (0,),
             range(len(due) + 1),
             range(new_cap + 1),
             range(repairs + 1),
         ):
+            if supplies and not built:
+                continue  # the supplies are consumed when the node is built
             residual = gain.points - (
                 blueprint * table.node_blueprint
                 + built * table.node_built
+                + supplies * table.supplies_consumed
                 + (known + new) * table.node_passive
                 + repair * table.repair
             )
             if residual < 0:
                 continue
-            cost = 2 * (blueprint + built) + 1.5 * new + repair + 0.1 * known
+            cost = 2 * (blueprint + built) + supplies + 1.5 * new + repair + 0.1 * known
             if best is None or (residual, cost) < best[0]:
-                best = ((residual, cost), blueprint, built, known, new, repair)
-        (residual, _), blueprint, built, known, new, repair = best
+                best = (
+                    (residual, cost),
+                    blueprint,
+                    built,
+                    supplies,
+                    known,
+                    new,
+                    repair,
+                )
+        (residual, _), blueprint, built, supplies, known, new, repair = best
         without_build = min(
             self._residuals_without_build(gain.points, len(due), new_cap, repairs),
             default=gain.points,
@@ -212,6 +224,7 @@ class NodeDetector(ActionDetector):
             "explanation": {
                 "blueprint": blueprint,
                 "built": built,
+                "own_supplies": supplies,
                 "passive_known": known,
                 "passive_new": new,
                 "repair": repair,
@@ -247,7 +260,8 @@ class NodeDetector(ActionDetector):
             decisions.append(
                 decision(
                     PENDING,
-                    "construction value (blueprint 40 / built 50); waiting for its passive "
+                    "construction value (blueprint 40 / built 50, +50 on own supplies); waiting "
+                    "for its passive "
                     "production to tell a node from a repair station",
                 )
             )
