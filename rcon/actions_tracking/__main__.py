@@ -40,7 +40,7 @@ def main(argv=None) -> int:
         "--all", action="store_true", help="also show resets and ignored counters"
     )
     replay_parser.add_argument(
-        "--garrison-roles", default="officer,squadleader", help="comma separated"
+        "--garrison-roles", default="officer,armycommander", help="comma separated"
     )
     replay_parser.add_argument(
         "--node-roles", default="engineer", help="comma separated"

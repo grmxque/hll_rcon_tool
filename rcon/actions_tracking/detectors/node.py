@@ -30,7 +30,7 @@ STREAM_CONFIRMED_HITS = 3
 REPORTED_GAIN = 40
 MAX_NEW_STREAMS_PER_POLL = 3
 # Their passive income (outposts: +10 per minute) looks like a node's.
-OUTPOST_ROLES = frozenset({"officer", "squadleader", "spotter"})
+OUTPOST_ROLES = frozenset({"officer", "spotter"})
 
 
 class NodeDetector(ActionDetector):

@@ -148,18 +148,7 @@ class Simulation:
                 and second - player.last_garrison >= 30
                 and self._garrison_spot_free(player)
             ):
-                player.last_garrison = second
-                player.still_until = second + 4
-                player.support += 50
-                self.garrisons.append(
-                    (player.player_id, player.team, player.x, player.y)
-                )
-                self.truth.garrisons[player.player_id] = (
-                    self.truth.garrisons.get(player.player_id, 0) + 1
-                )
-                if len([g for g in self.garrisons if g[1] == player.team]) > 6:
-                    oldest = next(g for g in self.garrisons if g[1] == player.team)
-                    self.garrisons.remove(oldest)  # destroyed
+                self._build_garrison(player, second)
             elif rng.random() < 1 / 120:
                 player.support += 5  # marking
         elif player.role == "engineer":
@@ -177,8 +166,26 @@ class Simulation:
                 player.support += 90  # repair station: no passive production
             elif rng.random() < 1 / 200:
                 player.support += 5  # blowtorch
-        elif player.role == "armycommander" and rng.random() < 1 / 120:
-            player.support += rng.choice([50, 50, 75, 100])
+        elif player.role == "armycommander":
+            if rng.random() < 1 / 120:
+                player.support += rng.choice([50, 50, 75, 100])  # abilities
+            elif rng.random() < 1 / 600 and second - player.last_garrison >= 30:
+                # Drives somewhere on the map and builds a garrison there.
+                player.x, player.y = self._random_pos()
+                if self._garrison_spot_free(player):
+                    self._build_garrison(player, second)
+
+    def _build_garrison(self, player: SimPlayer, second: int) -> None:
+        player.last_garrison = second
+        player.still_until = second + 4
+        player.support += 50
+        self.garrisons.append((player.player_id, player.team, player.x, player.y))
+        self.truth.garrisons[player.player_id] = (
+            self.truth.garrisons.get(player.player_id, 0) + 1
+        )
+        if len([g for g in self.garrisons if g[1] == player.team]) > 6:
+            oldest = next(g for g in self.garrisons if g[1] == player.team)
+            self.garrisons.remove(oldest)  # destroyed
 
     def _garrison_spot_free(self, player: SimPlayer) -> bool:
         return all(

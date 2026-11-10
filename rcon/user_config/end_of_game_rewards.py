@@ -1,21 +1,21 @@
 from typing import Literal
 
-from pydantic import Field, HttpUrl, field_serializer
+from pydantic import (
+    Field,
+    HttpUrl,
+    ValidationInfo,
+    field_serializer,
+    field_validator,
+)
 
-from rcon.user_config.utils import BaseUserConfig, key_check, set_user_config
+from rcon.user_config.utils import (
+    BaseUserConfig,
+    key_check,
+    set_user_config,
+    validate_game_roles,
+)
 
 TopCategory = Literal["combat", "offense", "defense", "support"]
-# Role names of both games, as reported by the game server (lowercase).
-BuilderRole = Literal[
-    "officer",
-    "squadleader",
-    "spotter",
-    "engineer",
-    "armycommander",
-    "tankcommander",
-    "support",
-    "rifleman",
-]
 
 
 class EndOfGameRewardsUserConfig(BaseUserConfig):
@@ -115,12 +115,12 @@ class EndOfGameRewardsUserConfig(BaseUserConfig):
     node_reward_days: int = Field(
         default=1, ge=0, title="Node Builders Reward (VIP Days)"
     )
-    garrison_builder_roles: list[BuilderRole] = Field(
-        default_factory=lambda: ["officer", "squadleader"],
+    garrison_builder_roles: list[str] = Field(
+        default_factory=lambda: ["officer", "armycommander"],
         title="Garrison Builder Roles",
-        description="Roles able to build a garrison (officer in HLL, squadleader in HLL Vietnam). Commander abilities give the same +50 support as a garrison.",
+        description="Roles able to build a garrison (officer = squad leader). Several commander abilities give the same +50 support as a garrison: a commander's garrison only counts once teammates spawn on it.",
     )
-    node_builder_roles: list[BuilderRole] = Field(
+    node_builder_roles: list[str] = Field(
         default_factory=lambda: ["engineer"],
         title="Node Builder Roles",
         description="Roles able to build a resource node.",
@@ -162,6 +162,11 @@ class EndOfGameRewardsUserConfig(BaseUserConfig):
             or self.thanks_banner_enabled
             or self.record_actions_snapshots
         )
+
+    @field_validator("garrison_builder_roles", "node_builder_roles")
+    @classmethod
+    def validate_builder_roles(cls, values, info: ValidationInfo):
+        return validate_game_roles(values, info)
 
     @field_serializer("discord_webhook_url")
     def serialize_webhook(self, value: HttpUrl | None):
