@@ -96,21 +96,24 @@ The player must have been alive during the interval. Builders are processed in t
 first, then those whose spawns are on their own spawn point, so that they claim their spawn credits before the
 ambiguous ones are analysed (a spawn credits only one player).
 
-**Confirmation.** A candidate is confirmed when, in one poll:
+**Confirmation.** A candidate is confirmed when, over the last poll (or the last two: the credit of a spawn
+can come one poll after it):
 
-- teammates spawn within 50 m of the build position, and clearly closer to it (15 m) than to a spawn point
-  the builder already had (his outpost, his garrisons);
-- the builder's support gain is **exactly** the credits of some of those spawns (+5 squad member, +3 other
-  teammate; the credit of a spawn can come with the next poll), plus credits of spawns on his other known
-  spawn points, plus possibly an outpost tick or a marking;
-- and his other observed credits alone do not explain that gain: then those teammates spawned at a point that
-  credits nobody;
-- the spot is not one where teammates already spawned without crediting anybody before the candidate (an HQ).
+- teammates spawned within 50 m of the build position, clearly closer to it (15 m) than to a spawn point the
+  builder already had (his outpost, his garrisons);
+- the builder's support gain is **exactly** made of: credits of some of those spawns (+5 squad member, +3
+  other teammate), credits of spawns on his other known spawn points, possibly an outpost tick or a marking,
+  and the value of a garrison he built in the same poll (+50, or +100 on his own supplies);
+- in that explanation, the spawns on his own known points are all counted first (they do credit him), and the
+  wave is still needed: otherwise those teammates spawned at a point that credits nobody. Spawns also near
+  another player's spawn point or candidate are not counted as his;
+- earlier waves at that spot, before or since the candidate, did not credit anybody (an HQ).
 
 Only the owner of a spawn point gets credits, so HQ spawns next to a commander, or next to an officer whose
 supplies were just consumed by someone else, confirm nothing. When a builder has several candidates near the
-wave, the closest one is confirmed. Candidates not confirmed within 5 minutes, or at the end of the match, are
-rejected.
+wave, the closest one is confirmed and his other candidates within 100 m are rejected (they would share its
+spawns). Spawns near another player's candidate are left to that player when explaining his own gains.
+Candidates not confirmed within 5 minutes, or at the end of the match, are rejected.
 
 **Data gaps** (more than 20 s between two polls: RCON outage, service restart): the positions during the gap
 are unknown, so a garrison built then cannot be confirmed and is not counted.
@@ -177,13 +180,14 @@ passive production stream (the nodes keep producing after a class change).
 ## Known limits
 
 - A garrison nobody spawns on within 5 minutes is not counted (simulation: about 14 % of the garrisons). Among
-  the garrisons used, about 8 % are missed: their spawn waves come with other gains of the builder that the
-  table cannot explain exactly, or the builder left.
+  the garrisons used, about 4 % are missed: a credit that matches two possible spawns is given to the one on
+  the builder's known spawn point, or the builder left.
 - A garrison rebuilt in place of the builder's own previous one cannot be told from it (its spawns are those
   of the old spot).
-- A garrison built during a data gap is not counted.
+- A garrison built during a data gap is not counted (its position is unknown).
+- A garrison less than 100 m from another one of the same builder is counted once.
 - A commander ability used during a spawn wave on a fresh point right next to him that credits him exactly
-  could be confirmed (simulation: about one in 40 matches).
+  could be confirmed (simulation: one false garrison in 40 matches).
 - A node and a repair station are identical when built; a node destroyed before its first tick stays
   unconfirmed. A repair station built in the last 150 s of a match counts as a node.
 - Constructions before the first poll of the tracking (CRCON started mid-match) are invisible, except nodes

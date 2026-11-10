@@ -20,6 +20,7 @@ and a new spot.
 from __future__ import annotations
 
 import math
+from itertools import product
 
 from rcon.actions_tracking.context import (
     MAX_POLL_INTERVAL,
@@ -47,6 +48,8 @@ RESIDUAL_TOLERANCE = 20
 CONFIRMATION_MARGIN = 1_500
 # Uncredited spawns at a spot before a candidate was made there: a point that credits nobody (HQ).
 UNCREDITED_SPAWNS_HQ = 3
+# Two candidates of one builder this close share their spawns: only one can be confirmed.
+SAME_GARRISON_DISTANCE = 10_000
 # Decisions with a smaller gain and no candidate are not reported (noise).
 REPORTED_GAIN = 40
 OUTPOST_ROLES = frozenset({"officer", "spotter"})
@@ -86,9 +89,16 @@ class GarrisonDetector(ActionDetector):
         # Confirmed garrisons per builder: {ts (built), x, y, team}
         self.garrisons: dict[str, list[dict]] = state.get("garrisons", {})
         self.candidates: list[dict] = state.get("candidates", [])
+        # Previous poll's gain of the builders with candidates: a spawn credit can come one poll
+        # after the spawn, so waves are also checked over two polls.
+        self.recent_gains: dict[str, dict] = state.get("recent_gains", {})
 
     def to_state(self) -> dict:
-        return {"garrisons": self.garrisons, "candidates": self.candidates}
+        return {
+            "garrisons": self.garrisons,
+            "candidates": self.candidates,
+            "recent_gains": self.recent_gains,
+        }
 
     def results(self) -> dict[str, tuple[int, float | None]]:
         return {
@@ -131,6 +141,17 @@ class GarrisonDetector(ActionDetector):
             decisions += self._decide(ctx, gain, self._analyse(ctx, gain))
         decisions += self._confirm_candidates(ctx)
         decisions += self._expire_candidates(ctx)
+        builders = {c["player_id"] for c in self.candidates}
+        self.recent_gains = {
+            pid: {
+                "ts": ctx.ts,
+                "since": gain.prev["ts"],
+                "points": gain.points,
+                "gap": gain.is_gap,
+            }
+            for pid, gain in ctx.gains.items()
+            if pid in builders
+        }
         return decisions
 
     def finalize(self, end_ts: float, names: dict[str, str]) -> list[Decision]:
@@ -177,7 +198,13 @@ class GarrisonDetector(ActionDetector):
         ledger = ctx.spawns
         pool = ledger.pool(sample, prev["ts"], ctx.ts)
         own = ledger.of(sample.player_id)
-        foreign = ledger.of_teammates(sample.player_id, sample.team, ctx.players)
+        # Spawn points of the teammates, and the positions of their garrison candidates: the
+        # spawns there are theirs (it is how their candidates get confirmed).
+        foreign = ledger.of_teammates(sample.player_id, sample.team, ctx.players) + [
+            c
+            for c in self.candidates
+            if c["player_id"] != sample.player_id and c["team"] == sample.team
+        ]
         located = [s for s in pool if ledger.near(s, own)]
         claimable = [s for s in pool if s in located or not ledger.near(s, foreign)]
         fives = self._five_point_sources(prev["role"], gain.interval)
@@ -189,12 +216,17 @@ class GarrisonDetector(ActionDetector):
             )
 
         def with_garrison(spawns):
-            # One garrison at most between two polls, built on someone else's supplies or on the
-            # builder's own (+50 more).
+            """(explanation, construction points): one garrison at most between two polls, built
+            on someone else's supplies or on the builder's own (+50 more)."""
             return min(
-                residual(spawns, table.garrison_built + supplies)
+                (
+                    residual(spawns, table.garrison_built + supplies),
+                    table.garrison_built + supplies,
+                )
                 for supplies in (0, table.supplies_consumed)
             )
+
+        h1, construction = with_garrison(pool)
 
         x, y = (sample.x, sample.y) if sample.alive else (prev["x"], prev["y"])
         result = {
@@ -204,8 +236,9 @@ class GarrisonDetector(ActionDetector):
             "h0_all": residual(pool, 0),
             "h0_claimable": residual(claimable, 0),
             "h0_located": residual(located, 0),
-            "h1": with_garrison(pool),
-            "h1_claimable": with_garrison(claimable),
+            "h1": h1,
+            "h1_claimable": with_garrison(claimable)[0],
+            "construction": construction,
             "can_build": sample.alive or prev["alive"],
             "position": (x, y),
         }
@@ -294,6 +327,7 @@ class GarrisonDetector(ActionDetector):
                 "team": sample.team,
                 "deadline": ts + CONFIRMATION_SECONDS,
                 "gain": gain.points,
+                "construction": analysis["construction"],
             }
         )
         reason = (
@@ -355,19 +389,43 @@ class GarrisonDetector(ActionDetector):
             or ctx.ts <= candidate["ts"]
         ):
             return []
-        if self._uncredited_spawn_point(ctx, candidate):
+        if self._uncredited_spawn_point(ctx, candidate, gain.prev["ts"]):
             return []
         # Spawns as close to one of his existing spawn points (outpost, garrisons) belong to it.
         known_before = [
             p for p in ctx.spawns.of(player_id) if p["since"] < candidate["ts"]
         ] + self.garrisons.get(player_id, [])
+        windows = [(gain.prev["ts"], gain.points)]
+        previous = self.recent_gains.get(player_id)
+        if previous and previous["ts"] == gain.prev["ts"] and not previous["gap"]:
+            windows.append((previous["since"], previous["points"] + gain.points))
+        for since, points in windows:
+            wave = self._credited_wave(
+                ctx, candidate, builder, since, points, known_before
+            )
+            if wave:
+                return wave
+        return []
+
+    def _credited_wave(
+        self,
+        ctx: PollContext,
+        candidate: dict,
+        builder: PlayerSample,
+        since: float,
+        points: int,
+        known_before: list[dict],
+    ) -> list[dict]:
+        """The wave on the candidate if the builder's gain since ``since`` (``points``) contains
+        its credits."""
+        player_id = candidate["player_id"]
         pool = [
             s
             for s in ctx.spawns.spawns
             if s["team"] == candidate["team"]
             and s["player_id"] != player_id
             and s["credited_to"] in (None, player_id)
-            and gain.prev["ts"] - MAX_POLL_INTERVAL / 4 < s["ts"] <= ctx.ts
+            and since - MAX_POLL_INTERVAL / 4 < s["ts"] <= ctx.ts
         ]
 
         def on_candidate(spawn: dict) -> bool:
@@ -381,33 +439,49 @@ class GarrisonDetector(ActionDetector):
         wave = [s for s in pool if on_candidate(s)]
         if not wave:
             return []
-        # His other credits can only come from his other known spawn points (outpost, garrisons).
+        # His other credits can only come from his other known spawn points (outpost, garrisons);
+        # spawns also near a teammate's spawn point or candidate are not certain to be his.
         own_points = ctx.spawns.of(player_id)
-        others = [s for s in pool if s not in wave and ctx.spawns.near(s, own_points)]
-        if self._credits_explain(gain.points, others, [], builder, 0):
-            # His other observed credits explain the gain: those teammates spawned at a point that
-            # credits nobody (the HQ next to him), not on his garrison.
-            return []
-        fives = self._five_point_sources(gain.prev["role"], gain.interval)
-        if self._credits_explain(gain.points, others, wave, builder, fives):
+        foreign = ctx.spawns.of_teammates(player_id, candidate["team"], ctx.players) + [
+            c
+            for c in self.candidates
+            if c["player_id"] != player_id and c["team"] == candidate["team"]
+        ]
+        others = [
+            s
+            for s in pool
+            if s not in wave
+            and ctx.spawns.near(s, own_points)
+            and not ctx.spawns.near(s, foreign)
+        ]
+        fives = self._five_point_sources(ctx.players[player_id]["role"], ctx.ts - since)
+        # A new garrison built in the window explains part of the gain already.
+        built = sum(
+            c.get("construction", self.table.garrison_built)
+            for c in self.candidates
+            if c["player_id"] == player_id and since < c["ts"] <= ctx.ts
+        )
+        if self._wave_credited(points - built, others, wave, builder, fives):
             return wave
         return []
 
-    def _uncredited_spawn_point(self, ctx: PollContext, candidate: dict) -> bool:
-        """Teammates already spawned here, crediting nobody, before the candidate: the HQ."""
-        before = [
+    def _uncredited_spawn_point(
+        self, ctx: PollContext, candidate: dict, wave_since: float
+    ) -> bool:
+        """Earlier waves here credited nobody (the HQ), before or since the candidate."""
+        earlier = [
             s
             for s in ctx.spawns.spawns
             if s["team"] == candidate["team"]
             and s["player_id"] != candidate["player_id"]
-            and s["ts"] < candidate["ts"]
+            and s["ts"] <= wave_since - MAX_POLL_INTERVAL / 4
             and s["credited_to"] is None
             and distance(s["x"], s["y"], candidate["x"], candidate["y"])
             <= SPAWN_POINT_RADIUS
         ]
-        return len(before) >= UNCREDITED_SPAWNS_HQ
+        return len(earlier) >= UNCREDITED_SPAWNS_HQ
 
-    def _credits_explain(
+    def _wave_credited(
         self,
         points: int,
         others: list[dict],
@@ -415,11 +489,14 @@ class GarrisonDetector(ActionDetector):
         builder: PlayerSample,
         fives: int,
     ) -> bool:
-        """Whether ``points`` are exactly the credits of some ``others`` spawns plus, when given,
-        at least one ``wave`` spawn and up to ``fives`` 5-point sources (outpost tick, marking).
+        """Whether the builder's gain contains credits of the ``wave`` spawns.
 
-        Only some of the wave may have credited the builder yet: the credit of a spawn can come with
-        the next poll.
+        The gain must be exactly the credits of some ``others`` spawns (on his known spawn points),
+        some wave spawns and up to ``fives`` 5-point sources (outpost tick, marking). Spawns on his
+        own points do credit him, so the explanation using the most of them is retained: the wave
+        counts only if that explanation still needs at least one wave spawn. Otherwise the
+        teammates near the candidate spawned at a point crediting nobody (the HQ next to him).
+        Only some spawns may have credited him yet: the credit can come with the next poll.
         """
         table = self.table
 
@@ -428,31 +505,26 @@ class GarrisonDetector(ActionDetector):
             return squad, len(spawns) - squad
 
         other_squad, other_team = split(others)
-        if not wave:
-            return (
-                points > 0
-                and min_residual(points, 0, other_squad, other_team, fives, table)[0]
-                == 0
-            )
         wave_squad, wave_team = split(wave)
-        for squad_used in range(wave_squad + 1):
-            for team_used in range(wave_team + 1):
-                if squad_used + team_used == 0:
-                    continue
-                rest = (
-                    points
-                    - squad_used * table.spawn_unit
-                    - team_used * table.spawn_team
-                )
-                if rest < 0:
-                    continue
-                if (
-                    rest == 0
-                    or min_residual(rest, 0, other_squad, other_team, fives, table)[0]
-                    == 0
-                ):
-                    return True
-        return False
+        best = None
+        for os_used, ot_used, ws_used, wt_used in product(
+            range(other_squad + 1),
+            range(other_team + 1),
+            range(wave_squad + 1),
+            range(wave_team + 1),
+        ):
+            rest = (
+                points
+                - table.spawn_unit * (os_used + ws_used)
+                - table.spawn_team * (ot_used + wt_used)
+            )
+            if rest < 0 or rest % table.spawn_unit or rest // table.spawn_unit > fives:
+                continue
+            # Most of his certain credits first, then the fewest possible-only sources.
+            key = (os_used + ot_used, -(rest // table.spawn_unit), ws_used + wt_used)
+            if best is None or key > best[0]:
+                best = (key, ws_used + wt_used)
+        return best is not None and best[1] > 0
 
     def _confirm(self, ctx: PollContext, candidate: dict) -> list[Decision]:
         """Count the garrison."""
@@ -463,7 +535,7 @@ class GarrisonDetector(ActionDetector):
             {"ts": candidate["ts"], "x": x, "y": y, "team": candidate["team"]}
         )
         ctx.spawns.learn(player_id, x, y, ctx.ts, "garrison")
-        return [
+        decisions = [
             Decision(
                 ctx.ts,
                 player_id,
@@ -475,6 +547,22 @@ class GarrisonDetector(ActionDetector):
                 details={"built_at": candidate["ts"]},
             )
         ]
+        # His other candidates this close would get the same spawns: they cannot be told apart.
+        for other in [
+            c
+            for c in self.candidates
+            if c["player_id"] == player_id
+            and distance(x, y, c["x"], c["y"]) <= SAME_GARRISON_DISTANCE
+        ]:
+            decisions.append(
+                self._reject(
+                    other,
+                    ctx.ts,
+                    "next to a confirmed garrison of this player",
+                    ctx.names,
+                )
+            )
+        return decisions
 
     def _expire_candidates(self, ctx: PollContext) -> list[Decision]:
         return [
