@@ -36,40 +36,54 @@ MAX_MESSAGE_LINES = 16
 LABELS = {
     "en": {
         "end_of_game": "END OF GAME",
+        "you_won": "You won {days} days of VIP",
+        "day": "d",
+        "best": "best {categories}",
+        "fidelity": "loyalty",
+        "top_garrison": "top 3 garrisons ({count})",
+        "node_builder": "node builder",
+        "best_players": "BEST PLAYERS",
+        "garrisons": "GARRISONS",
+        "others": "+{count} others",
+        "thanks": "Thanks for playing!",
         "offense": "Offense",
         "defense": "Defense",
         "support": "Support",
         "combat": "Combat",
-        "kills": "KILLS",
-        "kills_streak": "STREAK",
-        "kills_per_minute": "K/MIN",
-        "kill_death_ratio": "K/D",
-        "garrisons": "GARRISONS",
-        "nodes": "NODES",
-        "node_builders": "Nodes{bonus} : {count} builders",
-        "day": "d",
-        "days_of_vip": "DAYS OF VIP",
-        "you_won": "YOU WON",
+        "kills": "{value} kills",
+        "kills_streak": "streak {value}",
+        "kills_per_minute": "{value} kills/min",
+        "kill_death_ratio": "K/D {value}",
     },
     "fr": {
         "end_of_game": "FIN DE PARTIE",
+        "you_won": "Tu as gagné {days} jours de VIP",
+        "day": "j",
+        "best": "meilleur en {categories}",
+        "fidelity": "fidélité",
+        "top_garrison": "top 3 garnisons ({count})",
+        "node_builder": "constructeur de nœuds",
+        "best_players": "MEILLEURS",
+        "garrisons": "GARNISONS",
+        "others": "+{count} autres",
+        "thanks": "Merci d'avoir joué !",
         "offense": "Attaque",
         "defense": "Défense",
         "support": "Soutien",
         "combat": "Combat",
-        "kills": "KILLS",
-        "kills_streak": "SÉRIE",
-        "kills_per_minute": "K/MIN",
-        "kill_death_ratio": "K/D",
-        "garrisons": "GARNISONS",
-        "nodes": "NODES",
-        "node_builders": "Nodes{bonus} : {count} constructeurs",
-        "day": "j",
-        "days_of_vip": "JOURS DE VIP",
-        "you_won": "TU AS GAGNÉ",
+        "kills": "{value} kills",
+        "kills_streak": "série {value}",
+        "kills_per_minute": "{value} kills/min",
+        "kill_death_ratio": "K/D {value}",
     },
 }
 INDIVIDUAL_STATS = ("kills", "kills_streak", "kills_per_minute", "kill_death_ratio")
+# Garrison builders listed in the highlights message: two per line, three lines at most.
+GARRISON_BUILDERS_PER_LINE = 2
+GARRISON_BUILDER_LINES = 3
+NAME_LENGTH = 16
+# Two names on one line must not wrap on a console.
+PAIRED_NAME_LENGTH = 12
 
 
 @dataclass
@@ -201,77 +215,112 @@ def build_player_message(
     rewards: GameRewards,
     config: EndOfGameRewardsUserConfig,
 ) -> str:
-    """Compact layout, without blank lines, that fits the 16 lines a console can display.
+    """The VIP days the player won and why, or else the highlights of the match.
 
-    Disabled or empty sections are left out, and VIP days only show when they are granted.
+    Short and airy: a console displays 16 lines at most, blank lines included.
     """
     labels = LABELS[config.language]
+    if rewards.days.get(player["player_id"]):
+        body = _rewards_lines(player, rewards, config, labels)
+    else:
+        # Seeding (no reward possible), or nothing won this time.
+        body = _highlights_lines(rewards, config, labels)
+    lines = [f"█ {labels['end_of_game']} █", "", *body, "", labels["thanks"]]
+    return "\n".join(lines[:MAX_MESSAGE_LINES])
 
-    def granted(days: int) -> bool:
-        return rewards.rewards_allowed and days > 0
 
-    def inline(days: int) -> str:
-        return f" +{days} {labels['day']}" if granted(days) else ""
-
-    def bracketed(days: int) -> str:
-        return f" (+{days} {labels['day']})" if granted(days) else ""
-
-    header = f"█ {labels['end_of_game']} █"
-    if rewards.top_players and granted(config.top_category_reward_days):
-        header += f"{inline(config.top_category_reward_days)}/TOP"
-    game_lines = [header]
-    for category, best in rewards.top_players:
-        game_lines.append(
-            f"{labels[category]} : {short_name(str(best.get('player')))} "
-            f"({_format_value(_stat(best, category))})"
-        )
-    if rewards.top_garrison_builders:
-        game_lines.append(
-            f"▒ {labels['garrisons']}{inline(config.garrison_reward_days)} ▒"
-        )
-        for rank, builder in enumerate(rewards.top_garrison_builders, start=1):
-            game_lines.append(
-                f"{rank}. {short_name(builder.name)} ({builder.count('garrison')})"
-            )
-    if rewards.node_builders:
-        game_lines.append(
-            labels["node_builders"].format(
-                bonus=inline(config.node_reward_days), count=len(rewards.node_builders)
-            )
-        )
-
+def _rewards_lines(
+    player: dict, rewards: GameRewards, config: EndOfGameRewardsUserConfig, labels
+) -> list[str]:
+    """Total, then one line per kind of reward (from the reasons ``compute_rewards`` gave)."""
     player_id = player["player_id"]
-    hits = rewards.hits.get(player_id, set())
+    reasons = rewards.reasons.get(player_id, [])
 
-    def stat(key: str) -> str:
-        text = f"{labels[key]} {_format_value(_stat(player, key))}"
-        return text + bracketed(config.individual_reward_days) if key in hits else text
+    def line(days: int, text: str) -> str:
+        return f"+{days} {labels['day']}  {text}"
 
-    player_lines = [
-        f"▒ {short_name(str(player.get('player')), 24)} ▒",
-        f"{stat('kills')} · {stat('kills_streak')}",
-        f"{stat('kills_per_minute')} · {stat('kill_death_ratio')}",
-    ]
-    mine = rewards.actions.get(player_id)
-    built = []
-    if mine and config.garrison_rewards_enabled and mine.count("garrison"):
-        rewarded = any(b.player_id == player_id for b in rewards.top_garrison_builders)
-        built.append(
-            f"{labels['garrisons']} {mine.count('garrison')}"
-            + (bracketed(config.garrison_reward_days) if rewarded else "")
+    def grouped(days: int, items: list[str], template: str = "{items}") -> list[str]:
+        """Two items per line so that lines do not wrap on a console."""
+        first = line(days, template.format(items=", ".join(items[:2])))
+        indent = " " * len(line(days, ""))
+        return [first] + [
+            indent + ", ".join(items[i : i + 2]) for i in range(2, len(items), 2)
+        ]
+
+    lines = [labels["you_won"].format(days=rewards.days[player_id]), ""]
+    categories = [r.removeprefix("top_") for r in reasons if r.startswith("top_")]
+    categories = [c for c in categories if c in config.top_categories]
+    if categories:
+        lines += grouped(
+            config.top_category_reward_days * len(categories),
+            [labels[c].lower() for c in categories],
+            labels["best"].replace("{categories}", "{items}"),
         )
-    if mine and config.node_rewards_enabled and mine.count("node"):
-        built.append(
-            f"{labels['nodes']} {mine.count('node')}"
-            + bracketed(config.node_reward_days)
+    hits = [r.removeprefix("threshold_") for r in reasons if r.startswith("threshold_")]
+    if hits:
+        values = [
+            labels[key].format(value=_format_value(_stat(player, key)))
+            for key in INDIVIDUAL_STATS
+            if key in hits
+        ]
+        lines += grouped(config.individual_reward_days * len(values), values)
+    if "fidelity" in reasons:
+        lines.append(line(config.fidelity_reward_days, labels["fidelity"]))
+    if "top_garrison" in reasons:
+        mine = rewards.actions.get(player_id)
+        count = mine.count("garrison") if mine else 0
+        lines.append(
+            line(
+                config.garrison_reward_days, labels["top_garrison"].format(count=count)
+            )
         )
-    if built:
-        player_lines.append(" · ".join(built))
-    if days := rewards.days.get(player_id):
-        player_lines.append(f"{labels['you_won']} {days} {labels['days_of_vip']}!")
-    # The layout fits by construction; a duplicated top category must not hide the player's part.
-    game_lines = game_lines[: MAX_MESSAGE_LINES - len(player_lines)]
-    return "\n".join(game_lines + player_lines)
+    if "node_builder" in reasons:
+        lines.append(line(config.node_reward_days, labels["node_builder"]))
+    return lines
+
+
+def _highlights_lines(
+    rewards: GameRewards, config: EndOfGameRewardsUserConfig, labels
+) -> list[str]:
+    """Best player of each category and the garrison builders of the match."""
+    sections = []
+    if rewards.top_players:
+        sections.append(
+            [f"▒ {labels['best_players']} ▒"]
+            + [
+                f"{labels[category]} : {short_name(str(best.get('player')), NAME_LENGTH)} "
+                f"({_format_value(_stat(best, category))})"
+                for category, best in rewards.top_players
+            ]
+        )
+    builders = (
+        rank_players(rewards.actions, "garrison")
+        if config.garrison_rewards_enabled
+        else []
+    )
+    if builders:
+        shown = [
+            f"{short_name(b.name, PAIRED_NAME_LENGTH)} ({b.count('garrison')})"
+            for b in builders
+        ]
+        room = GARRISON_BUILDERS_PER_LINE * GARRISON_BUILDER_LINES
+        if len(shown) > room:
+            shown = shown[: room - 1] + [
+                labels["others"].format(count=len(shown) - room + 1)
+            ]
+        sections.append(
+            [f"▒ {labels['garrisons']} ▒"]
+            + [
+                " · ".join(shown[i : i + GARRISON_BUILDERS_PER_LINE])
+                for i in range(0, len(shown), GARRISON_BUILDERS_PER_LINE)
+            ]
+        )
+    lines = []
+    for section in sections:
+        if lines:
+            lines.append("")
+        lines += section
+    return lines
 
 
 def processed_key(struct_log: StructuredLogLineWithMetaData) -> str:
