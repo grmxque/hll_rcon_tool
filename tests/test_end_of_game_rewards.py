@@ -145,40 +145,69 @@ def test_expiration_rules():
         (
             "en",
             [
-                "█ END OF GAME █ +4 d/TOP",
-                "Offense : Dave (5)",
-                "▒ Dave ▒",
-                "KILLS 80 (+2 d) · STREAK 0",
-                "K/MIN 0.71 · K/D 0",
-                "YOU WON 6 DAYS OF VIP!",
+                "█ END OF GAME █",
+                "",
+                "You won 6 days of VIP",
+                "",
+                "+4 d  best offense",
+                "+2 d  80 kills",
+                "",
+                "Thanks for playing!",
             ],
         ),
         (
             "fr",
             [
-                "█ FIN DE PARTIE █ +4 j/TOP",
-                "Attaque : Dave (5)",
-                "▒ Dave ▒",
-                "KILLS 80 (+2 j) · SÉRIE 0",
-                "K/MIN 0.71 · K/D 0",
-                "TU AS GAGNÉ 6 JOURS DE VIP!",
+                "█ FIN DE PARTIE █",
+                "",
+                "Tu as gagné 6 jours de VIP",
+                "",
+                "+4 j  meilleur en attaque",
+                "+2 j  80 kills",
+                "",
+                "Merci d'avoir joué !",
             ],
         ),
     ],
 )
-def test_player_message_layout(language, expected):
+def test_winner_message(language, expected):
     dave = player("dave", kills=80, kills_per_minute=0.71234, offense=5)
     cfg = config(language=language, top_categories=["offense"])
     rewards = compute_rewards([dave], cfg, {}, 60)
     assert build_player_message(dave, rewards, cfg).splitlines() == expected
 
 
-def test_message_without_rewards_shows_no_days():
-    dave = player("dave", kills=80)
-    cfg = config(min_players_for_rewards=50)
-    rewards = compute_rewards([dave], cfg, {}, 10)
-    message = build_player_message(dave, rewards, cfg)
-    assert "VIP" not in message
+def test_seeding_message_shows_the_highlights_without_vip():
+    dave = player("dave", kills=80, offense=5)
+    builders = actions(built("dave", garrisons=2, reached=1))
+    cfg = construction_config(
+        language="fr", min_players_for_rewards=50, top_categories=["offense"]
+    )
+    rewards = compute_rewards([dave], cfg, {}, 10, builders)
+    assert build_player_message(dave, rewards, cfg).splitlines() == [
+        "█ FIN DE PARTIE █",
+        "",
+        "▒ MEILLEURS ▒",
+        "Attaque : Dave (5)",
+        "",
+        "▒ GARNISONS ▒",
+        "Dave (2)",
+        "",
+        "Merci d'avoir joué !",
+    ]
+
+
+def test_player_without_vip_gets_the_highlights(stats):
+    rewards = compute_rewards(stats, config(), {}, 60)
+    message = build_player_message(player("zoe"), rewards, config())
+    assert "BEST PLAYERS" in message and "Offense : Alice (900)" in message
+    assert "VIP" not in message and "+" not in message
+
+
+def test_unlimited_vip_gets_the_highlights(stats):
+    vips = {"alice": {"player_id": "alice", "vip_expiration": None}}
+    rewards = compute_rewards(stats, config(), vips, 60)
+    assert "VIP" not in build_player_message(stats[0], rewards, config())
 
 
 @pytest.fixture
@@ -215,7 +244,7 @@ def test_process_messages_connected_players_and_grants_vip(stats, rcon, audit):
         "alice",
         "bob",
     ]  # carol is offline
-    assert "YOU WON 4 DAYS OF VIP!" in calls[0].kwargs["message"]
+    assert "You won 4 days of VIP" in calls[0].kwargs["message"]
 
     grants = {c.args[0]: c.args for c in rcon.add_vip.call_args_list}
     assert grants["alice"] == (
@@ -485,34 +514,43 @@ def worst_case_rewards(language):
         )
         for i in range(5)
     ]
+    stats[0] |= {"offense": 9999, "defense": 9999, "support": 9999, "combat": 9999}
     builders = actions(
         *(
             built(f"p{i}", garrisons=10 - i, nodes=3, name=f"{long}{i}")
-            for i in range(5)
+            for i in range(9)
         )
     )
     cfg = config(
-        language=language, garrison_rewards_enabled=True, node_rewards_enabled=True
+        language=language,
+        garrison_rewards_enabled=True,
+        node_rewards_enabled=True,
+        fidelity_reward_days=1,
     )
     vips = {"p0": {"player_id": "p0", "vip_expiration": NOW + timedelta(days=3)}}
-    cfg = cfg.model_copy(update={"fidelity_reward_days": 1})
     return stats, cfg, compute_rewards(stats, cfg, vips, 60, builders)
 
 
 @pytest.mark.parametrize("language", ["en", "fr"])
-def test_message_fits_a_console_in_the_worst_case(language):
+def test_messages_fit_a_console_in_the_worst_case(language):
     stats, cfg, rewards = worst_case_rewards(language)
-    message = build_player_message(stats[0], rewards, cfg)
-    lines = message.splitlines()
-    assert len(lines) <= 16
-    assert all(len(line) <= 40 for line in lines), lines
-    assert lines[-1].startswith(("YOU WON", "TU AS GAGNÉ"))
-    assert any(
-        line.startswith(("GARRISONS 10 (+1", "GARNISONS 10 (+1")) for line in lines
+    winner = build_player_message(stats[0], rewards, cfg).splitlines()
+    # Every reward kind: 4 best scores, 4 thresholds, loyalty, garrisons, nodes.
+    assert len(winner) <= 16
+    assert all(len(line) <= 40 for line in winner), winner
+    days = rewards.days["p0"]
+    assert days == 4 * 4 + 4 * 2 + 1 + 1 + 1
+    assert winner[2] in (
+        f"You won {days} days of VIP",
+        f"Tu as gagné {days} jours de VIP",
     )
+    assert sum(line.startswith("+") for line in winner) == 5
+    highlights = build_player_message(player("zoe"), rewards, cfg).splitlines()
+    assert len(highlights) <= 16
+    assert all(len(line) <= 40 for line in highlights), highlights
 
 
-def test_message_with_constructions():
+def test_winner_message_with_constructions():
     builders = actions(
         built("alice", garrisons=5, reached=1),
         built("bob", garrisons=4, reached=2),
@@ -520,31 +558,45 @@ def test_message_with_constructions():
         built("dave", garrisons=1, reached=4, nodes=1),
     )
     cfg = construction_config(language="fr")
-    carol = player("carol")
-    rewards = compute_rewards([carol], cfg, {}, 60, builders)
-    assert build_player_message(carol, rewards, cfg).splitlines() == [
+    rewards = compute_rewards([player("carol")], cfg, {}, 60, builders)
+    assert build_player_message(player("carol"), rewards, cfg).splitlines() == [
         "█ FIN DE PARTIE █",
-        "▒ GARNISONS +1 j ▒",
-        "1. Alice (5)",
-        "2. Bob (4)",
-        "3. Carol (3)",
-        "Nodes +1 j : 2 constructeurs",
-        "▒ Carol ▒",
-        "KILLS 0 · SÉRIE 0",
-        "K/MIN 0 · K/D 0",
-        "GARNISONS 3 (+1 j) · NODES 2 (+1 j)",
-        "TU AS GAGNÉ 2 JOURS DE VIP!",
+        "",
+        "Tu as gagné 2 jours de VIP",
+        "",
+        "+1 j  top 3 garnisons (3)",
+        "+1 j  constructeur de nœuds",
+        "",
+        "Merci d'avoir joué !",
     ]
-    dave = player("dave")
-    message = build_player_message(dave, rewards, cfg)
-    assert "GARNISONS 1 · NODES 1 (+1 j)" in message  # not in the top 3
+    message = build_player_message(player("dave"), rewards, cfg)
+    assert "top 3" not in message and "+1 j  constructeur de nœuds" in message
 
 
-def test_message_sections_are_omitted_when_disabled_or_empty():
-    cfg = construction_config()
-    rewards = compute_rewards([player("alice")], cfg, {}, 60, {})
-    message = build_player_message(player("alice"), rewards, cfg)
-    assert "GARRISONS" not in message and "Nodes" not in message
+def test_highlights_list_garrison_builders_two_per_line():
+    builders = actions(
+        *(built(f"p{i}", garrisons=9 - i, reached=i, name=f"P{i}") for i in range(9))
+    )
+    cfg = construction_config(min_players_for_rewards=50)
+    rewards = compute_rewards([], cfg, {}, 10, builders)
+    lines = build_player_message(player("zoe"), rewards, cfg).splitlines()
+    assert lines[2:6] == [
+        "▒ GARRISONS ▒",
+        "P0 (9) · P1 (8)",
+        "P2 (7) · P3 (6)",
+        "P4 (5) · +4 others",
+    ]
+
+
+def test_highlights_sections_are_omitted_when_disabled_or_empty():
+    cfg = construction_config(garrison_rewards_enabled=False)
+    rewards = compute_rewards([], cfg, {}, 60, actions(built("alice", garrisons=3)))
+    assert build_player_message(player("alice"), rewards, cfg).splitlines() == [
+        "█ END OF GAME █",
+        "",
+        "",
+        "Thanks for playing!",
+    ]
 
 
 def test_match_end_passes_the_actions_of_the_ending_match(stats, rcon, monkeypatch):

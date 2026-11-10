@@ -7,9 +7,8 @@ default.
 
 At each match end:
 
-1. every connected player receives a message with the best score of each `top_categories` entry, the TOP 3
-   garrison builders and the number of node builders (when those categories are enabled), their own kills,
-   kill streak, kills per minute, kill/death ratio and constructions, and the VIP days they won;
+1. every connected player receives a message: the VIP days they won and why, or else the highlights of the
+   match (see [Message](#message));
 2. the rewarded players get VIP days.
 
 ## Rewards
@@ -51,29 +50,48 @@ Differences from the original plugin:
 
 ## Message
 
-Console players cannot display more than 16 lines, so the message has no blank line and stays within 16
-lines in the worst case (4 best scores, TOP 3 garrisons, every threshold reached), for example:
+Console players cannot display more than 16 lines, blank lines included, so the message is short and only
+has one of two contents.
+
+**The player won VIP days**: the total, then one line per kind of reward (best scores, thresholds reached
+with the player's values, loyalty, TOP 3 garrisons, node builder), two items per line at most:
 
 ```
-█ FIN DE PARTIE █ +4 j/TOP
+█ FIN DE PARTIE █
+
+Tu as gagné 14 jours de VIP
+
++8 j  meilleur en attaque, soutien
++4 j  série 12, K/D 2.1
++1 j  fidélité
++1 j  top 3 garnisons (5)
++1 j  constructeur de nœuds
+
+Merci d'avoir joué !
+```
+
+**Otherwise** (seeding: fewer than `min_players_for_rewards` players, nothing won, or unlimited VIP): the
+highlights of the match, the best player of each `top_categories` entry and the garrison builders (two per
+line, three lines at most, then `+N autres`):
+
+```
+█ FIN DE PARTIE █
+
+▒ MEILLEURS ▒
 Attaque : Alice (900)
 Défense : Bob (800)
 Soutien : Carol (600)
 Combat : Bob (400)
-▒ GARNISONS +1 j ▒
-1. grmxque (5)
-2. tartanpion (4)
-3. martinmatin (3)
-Nodes +1 j : 7 constructeurs
-▒ grmxque ▒
-KILLS 45 (+2 j) · SÉRIE 10
-K/MIN 0.81 · K/D 1.6 (+2 j)
-GARNISONS 5 (+1 j) · NODES 2 (+1 j)
-TU AS GAGNÉ 10 JOURS DE VIP!
+
+▒ GARNISONS ▒
+grmxque (5) · tartanpion (4)
+martinmatin (3)
+
+Merci d'avoir joué !
 ```
 
-Disabled or empty sections are left out, names are cut at 20 characters (24 for the player's own name), and
-VIP days only show when they are granted.
+Empty or disabled sections are left out. Names are cut at 16 characters (12 in the garrison list), so that
+lines do not wrap on a console. Node builders are thanked by the banner, not in this message.
 
 ## Thanks banner
 
