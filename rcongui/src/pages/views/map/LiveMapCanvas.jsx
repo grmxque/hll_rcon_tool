@@ -15,6 +15,7 @@ import {
   zoomAt,
 } from "./coordinates";
 import { playerLabel } from "./playerLabel";
+import { garrisonDescription } from "./garrisons";
 
 export const TEAM_COLORS = {
   allies: "#3b82f6",
@@ -123,6 +124,60 @@ const PlayerMarker = memo(function PlayerMarker({
   );
 });
 
+// Candidates (detected from the score, not confirmed yet) are see-through like the dead.
+const CANDIDATE_OPACITY = 0.45;
+
+const GarrisonMarker = memo(function GarrisonMarker({ garrison, position, scale }) {
+  const size = 9 / scale;
+  const candidate = garrison.status === "candidate";
+  const { title, lines } = garrisonDescription(garrison, Date.now());
+  return (
+    <g
+      transform={`translate(${position.x} ${position.y})`}
+      opacity={candidate ? CANDIDATE_OPACITY : 1}
+      style={{ cursor: "default" }}
+    >
+      <Tooltip
+        title={
+          <Box>
+            <Typography variant="subtitle2">{title}</Typography>
+            {lines.map((line) => (
+              <Typography key={line} variant="body2">
+                {line}
+              </Typography>
+            ))}
+          </Box>
+        }
+        disableInteractive
+      >
+        <g>
+          <rect
+            x={-size}
+            y={-size}
+            width={size * 2}
+            height={size * 2}
+            transform="rotate(45)"
+            fill={TEAM_COLORS[garrison.team] ?? TEAM_COLORS.unassigned}
+            stroke="#fff"
+            strokeWidth={1.5 / scale}
+            strokeDasharray={candidate ? `${3 / scale} ${2 / scale}` : undefined}
+          />
+          <text
+            textAnchor="middle"
+            dominantBaseline="central"
+            fontSize={11 / scale}
+            fontWeight="bold"
+            fill="#fff"
+            pointerEvents="none"
+          >
+            G
+          </text>
+        </g>
+      </Tooltip>
+    </g>
+  );
+});
+
 const inSquad = (player, squad) =>
   Boolean(squad) && player.team === squad.team && player.unit_name === squad.unit_name;
 
@@ -204,6 +259,7 @@ const LiveMapCanvas = forwardRef(function LiveMapCanvas(
   {
     layer,
     players,
+    garrisons = [],
     selectedId,
     highlightSquad,
     showNames,
@@ -378,6 +434,15 @@ const LiveMapCanvas = forwardRef(function LiveMapCanvas(
             <Sectors sectors={layer.sectors} extent={layer.image_extent} scale={view.scale} />
           )}
           {grid && <Grid geometry={grid} scale={view.scale} />}
+          {layer &&
+            garrisons.map((garrison) => (
+              <GarrisonMarker
+                key={`${garrison.builder_id}:${garrison.built_at}`}
+                garrison={garrison}
+                position={worldToMap(layer.image_extent, garrison.x, garrison.y)}
+                scale={view.scale}
+              />
+            ))}
           {layer && drawOrder(players, highlightSquad).map((player) => (
             <PlayerMarker
               key={player.player_id}

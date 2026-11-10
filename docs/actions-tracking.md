@@ -135,6 +135,12 @@ passive production stream (the nodes keep producing after a class change).
   tracking started after it). Passive production alone never counts as a *new* construction: the node count is
   the larger of the confirmed constructions and the most simultaneous streams.
 
+## Consumers
+
+- [End of Game Rewards](end-of-game-rewards.md): TOP 3 garrison builders, node builders, thanks banner.
+- [Live map](live-map.md): garrison candidates and confirmed garrisons still in use
+  (`tracker.live_garrisons()`, `GarrisonDetector.live()`).
+
 ## Diagnostics
 
 - Each decision is logged by the log loop (`Action <kind> <verdict>: <name> <player_id> (+gain in Ns) <reason>

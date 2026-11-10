@@ -137,6 +137,7 @@ def test_live_map_with_empty_server():
         "layer": None,
         "score": None,
         "players": [],
+        "garrisons": [],
         "match_start_ms": None,
     }
 
@@ -246,3 +247,31 @@ def test_live_map_for_survives_a_gamestate_failure(monkeypatch):
 
     assert result["score"] is None
     assert result["layer"]["map_id"] == "carentan"
+
+
+def test_live_map_includes_the_detected_garrisons(monkeypatch):
+    monkeypatch.setattr(live_map, "MapsHistory", lambda: [_match()])
+    garrison = {"x": 1.0, "y": 2.0, "team": "allies", "status": "candidate"}
+    calls = []
+    monkeypatch.setattr(
+        live_map, "live_garrisons", lambda start: calls.append(start) or [garrison]
+    )
+
+    result = live_map.live_map_for(_rcon())
+
+    assert result["garrisons"] == [garrison]
+    assert calls == [1_700_000_000]
+
+
+def test_live_map_without_garrisons_when_the_tracking_fails(monkeypatch):
+    monkeypatch.setattr(live_map, "MapsHistory", lambda: [_match()])
+
+    def broken(start):
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr(live_map, "live_garrisons", broken)
+
+    result = live_map.live_map_for(_rcon())
+
+    assert result["garrisons"] == []
+    assert result["players"] == []

@@ -27,6 +27,16 @@ player, refreshed every 2 seconds.
 - The current layer's grid (letters / numbers) is drawn over the image.
 - Warfare / Offensive: each sector is coloured by the team holding it, derived from the score (option
   "Colour sectors by owner" to turn it off).
+- Garrisons detected by the [actions tracking](actions-tracking.md) are drawn as team-coloured diamonds marked
+  `G`, under the players (option "Show garrisons", which also gives the counts; the team filters apply):
+  - **possible** (see-through, dashed outline): the builder's score shows a garrison, not confirmed yet (a
+    commander ability or supplies consumed give the same points);
+  - **confirmed** (opaque): teammates spawned on it. It disappears after 20 minutes without a spawn on it
+    (destruction is not observable).
+
+  The tooltip gives the builder, its age and the last spawn on it. Requires the actions tracking to run
+  (End of Game Rewards enabled with a construction category, the banner or the snapshot recording); otherwise
+  no garrison is shown.
 
 ## Permission
 
@@ -45,6 +55,8 @@ so only give it to trusted admins.
   the map's large (Warfare) grid on each axis. Skirmish layers keep that image and draw their own smaller grid.
 - Score and remaining time: `Rcon.get_gamestate()` (cached ~2 s). If it fails the map is still returned,
   without the banner.
+- Garrisons: the actions tracking state of the match in Redis (`rcon.actions_tracking.tracker.live_garrisons`),
+  updated by the log loop every 3 to 4 s. If it cannot be read the map is returned without garrisons.
 - Sector owners: the score is the number of sectors each team holds, counted from its spawn side
   (`Map.allies_direction`). Only for layers with 5 sectors of 3 capture zones (Warfare, Offensive).
 - World axes: `x` towards the east, `y` towards the south (game centimetres), mapped directly onto image pixels.
@@ -59,14 +71,14 @@ If hllrcon does not know the current layer, the page shows a message and no map.
 
 - Backend: `rcon/live_map.py` (pure builders + `live_map_for(rcon)`, tests in `tests/test_live_map.py`) and
   `RconAPI.get_live_map`.
-- Frontend: `rcongui/src/pages/views/map/` — `LiveMapCanvas.jsx` (SVG with pan/zoom, no map library), `PlayerLogs.jsx`, `ScoreBar.jsx`,
+- Frontend: `rcongui/src/pages/views/map/` — `LiveMapCanvas.jsx` (SVG with pan/zoom, no map library), `PlayerLogs.jsx`, `ScoreBar.jsx`, `garrisons.js` (filtering and tooltips),
   `MapSidebar.jsx`, `coordinates.js` (world → image → screen conversions), `deadPlayers.js` (last known
   positions) and `playerLabel.js` (marker labels), tested by `node --test src/pages/views/map/*.test.mjs`.
 
 ## Previewing without a game server
 
 With the local stack (`docs/local-dev.md`) and `npm run dev`, open `/views/map?demo`: the page uses fake
-players moving around Carentan, a score that changes every 20 s and fake kill logs (`rcongui/src/pages/views/map/demo.js`). This mode only
+players moving around Carentan, a score that changes every 20 s, a few garrisons (confirmed and possible) and fake kill logs (`rcongui/src/pages/views/map/demo.js`). This mode only
 exists in the Vite dev server; production builds do not contain it.
 
 ## Known limits
@@ -77,6 +89,8 @@ exists in the Vite dev server; production builds do not contain it.
   colour until the score changes.
 - Strongpoints are not shown: the game server has no command to read the active objectives of the match in
   progress, so drawing the 15 possible ones would be misleading.
-- Garrisons, outposts and other spawn points cannot be shown: the game server exposes them neither through
-  RCON commands nor in the logs.
+- Garrisons are those detected from the scores (see above), with the actions tracking delay and limits: a
+  garrison nobody spawns on stays "possible" for 5 minutes then disappears, a destroyed one stays drawn until
+  20 minutes without spawn. Outposts and other spawn points are not shown: the game server exposes them
+  neither through RCON commands nor in the logs.
 - Vehicles are not shown separately: crew members appear at the vehicle's position.

@@ -5,6 +5,7 @@ import { cmd } from "@/utils/fetchUtils";
 import LiveMapCanvas from "./LiveMapCanvas";
 import MapSidebar, { isUnassigned } from "./MapSidebar";
 import { updateLastPositions, withDeadPositions } from "./deadPlayers";
+import { visibleGarrisons } from "./garrisons";
 import PlayerLogs from "./PlayerLogs";
 import ScoreBar from "./ScoreBar";
 
@@ -66,6 +67,12 @@ const LiveMapPage = () => {
   const [showUnassigned, setShowUnassigned] = useState(false);
   const [showDead, setShowDead] = useState(true);
   const [showSectorColors, setShowSectorColors] = useState(true);
+  const [showGarrisons, setShowGarrisons] = useState(true);
+  const garrisons = data?.garrisons ?? [];
+  const mapGarrisons = useMemo(
+    () => visibleGarrisons(garrisons, { show: showGarrisons, visibleTeams }),
+    [garrisons, showGarrisons, visibleTeams],
+  );
 
   // Last alive position of each player, so the dead stay on the map until they redeploy.
   // Forgotten when a new match starts.
@@ -135,6 +142,7 @@ const LiveMapPage = () => {
               ref={canvasRef}
               layer={data?.layer ?? null}
               players={mapPlayers}
+              garrisons={mapGarrisons}
               selectedId={selectedId}
               highlightSquad={highlightSquad}
               showNames={showNames}
@@ -183,6 +191,9 @@ const LiveMapPage = () => {
               onShowDead={setShowDead}
               showSectorColors={showSectorColors}
               onShowSectorColors={setShowSectorColors}
+              garrisons={garrisons}
+              showGarrisons={showGarrisons}
+              onShowGarrisons={setShowGarrisons}
             />
           )}
         </Box>
