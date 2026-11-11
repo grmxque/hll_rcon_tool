@@ -76,7 +76,11 @@ def snapshot_from_players(dp: GetDetailedPlayers, ts: float) -> PollSnapshot:
                 player_id=player_id,
                 name=player.get("name") or player_id,
                 team=player.get("team"),
-                unit_id=player.get("unit_id"),
+                # CRCON gives unit_id 0 to Able and to players without a squad: the latter must
+                # not count as Able squad members (+5 instead of +3 for a spawn).
+                unit_id=None
+                if player.get("unit_name") == "unassigned"
+                else player.get("unit_id"),
                 role=player.get("role"),
                 support=counter("support"),
                 deaths=counter("deaths"),
@@ -212,7 +216,9 @@ def live_garrisons(map_start: int | None) -> list[dict]:
     if state is None:
         return []
     engine = make_engine(config, state)
-    return engine.detectors["garrison"].live(engine.spawns, engine.names)
+    return engine.detectors["garrison"].live(
+        engine.spawns, engine.names, engine.last_ts
+    )
 
 
 def stored_decisions(map_start: int) -> list[dict]:

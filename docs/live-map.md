@@ -95,7 +95,8 @@ exists in the Vite dev server; production builds do not contain it.
 - Strongpoints are not shown: the game server has no command to read the active objectives of the match in
   progress, so drawing the 15 possible ones would be misleading.
 - Garrisons are those detected from the scores (see above), with the actions tracking delay and limits: a
-  garrison nobody spawns on stays "possible" for 5 minutes then disappears, a destroyed one stays drawn until
+  garrison nobody spawns on stays "possible" for 20 minutes (it can still be confirmed later), a destroyed one
+  stays drawn until
   20 minutes without spawn. Outposts and other spawn points are not shown: the game server exposes them
   neither through RCON commands nor in the logs.
 - Vehicles are not shown separately: crew members appear at the vehicle's position.

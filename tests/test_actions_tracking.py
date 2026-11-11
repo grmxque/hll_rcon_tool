@@ -366,3 +366,33 @@ def test_replay_trace_shows_one_players_polls(tmp_path, capsys):
     assert lines[1].endswith("death +1") and "(0, 0, 0) dead/deploying" in lines[1]
     assert "SPAWN detected" in lines[2] and "(    95000," in lines[2]
     assert "jump 1840 m" in lines[3]
+
+
+def test_players_without_a_squad_are_not_in_able():
+    # CRCON gives unit_id 0 to Able and to players without a squad.
+    dp = {
+        "players": {
+            "able": {"name": "A", "team": "allies", "unit_id": 0, "unit_name": "able"},
+            "solo": {
+                "name": "S",
+                "team": "allies",
+                "unit_id": 0,
+                "unit_name": "unassigned",
+            },
+        }
+    }
+    samples = {s.player_id: s for s in tracker.snapshot_from_players(dp, 1.0).players}
+    assert samples["able"].unit_id == 0
+    assert samples["solo"].unit_id is None
+
+
+def test_dormant_candidates_stay_on_the_live_map_for_20_minutes(red, config):
+    rcon = Mock()
+    tracker.observe_poll(rcon, MATCH, players(off=0), now=10_003)
+    tracker.observe_poll(rcon, MATCH, players(off=50), now=10_006)
+    tracker.observe_poll(rcon, MATCH, players(off=50), now=10_006 + 600)  # dormant
+    assert [g["status"] for g in tracker.live_garrisons(MATCH["start"])] == [
+        "candidate"
+    ]
+    tracker.observe_poll(rcon, MATCH, players(off=50), now=10_006 + 1_300)
+    assert tracker.live_garrisons(MATCH["start"]) == []
