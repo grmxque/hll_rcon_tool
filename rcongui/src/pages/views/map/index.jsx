@@ -4,7 +4,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { cmd } from "@/utils/fetchUtils";
 import LiveMapCanvas from "./LiveMapCanvas";
 import MapSidebar, { isUnassigned } from "./MapSidebar";
-import { updateLastPositions, withDeadPositions } from "./deadPlayers";
+import { updateDeployment, updateLastPositions, withDeadPositions, withDeployment } from "./deadPlayers";
 import { visibleGarrisons } from "./garrisons";
 import PlayerLogs from "./PlayerLogs";
 import ScoreBar from "./ScoreBar";
@@ -76,13 +76,20 @@ const LiveMapPage = () => {
 
   // Last alive position of each player, so the dead stay on the map until they redeploy.
   // Forgotten when a new match starts.
-  const lastPositions = useRef({ match: null, positions: new Map() });
+  // Players in the menus or whose body is still shown after a death are not deployed yet.
+  const lastPositions = useRef({ match: null, positions: new Map(), deployment: new Map() });
   const players = useMemo(() => {
-    const raw = data?.players ?? [];
     const match = `${data?.match_start_ms}:${data?.layer?.map_id}`;
-    const previous = lastPositions.current.match === match ? lastPositions.current.positions : new Map();
+    const sameMatch = lastPositions.current.match === match;
+    const deployment = updateDeployment(
+      sameMatch ? lastPositions.current.deployment : new Map(),
+      data?.players ?? [],
+      { initial: !sameMatch },
+    );
+    const raw = withDeployment(data?.players ?? [], deployment);
+    const previous = sameMatch ? lastPositions.current.positions : new Map();
     const positions = updateLastPositions(previous, raw);
-    lastPositions.current = { match, positions };
+    lastPositions.current = { match, positions, deployment };
     return withDeadPositions(raw, positions).sort((a, b) => a.name.localeCompare(b.name));
   }, [data]);
   const mapPlayers = useMemo(

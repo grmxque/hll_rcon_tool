@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { updateLastPositions, withDeadPositions } from "./deadPlayers.js";
+import { updateDeployment, updateLastPositions, withDeadPositions, withDeployment } from "./deadPlayers.js";
 
 const player = (id, { alive = true, x = 0, y = 0, team = "allies" } = {}) => ({
   player_id: id,
@@ -40,4 +40,26 @@ test("players never seen alive, gone, or who switched team are not kept", () => 
   assert.equal(positions.size, 0);
   const shown = withDeadPositions([player("3", { alive: false })], positions);
   assert.equal(shown[0].dead, undefined);
+});
+
+test("a player in the menus is not drawn until his position changes", () => {
+  const menus = { ...player("9", { x: 97748, y: 35110 }), deaths: 0 };
+  let states = updateDeployment(new Map(), [{ ...player("1", { x: 5 }), deaths: 0 }], { initial: true });
+  assert.equal(states.get("1").deployed, true); // there when the page opened
+  states = updateDeployment(states, [menus]);
+  assert.deepEqual(withDeployment([menus], states)[0].alive, false);
+  states = updateDeployment(states, [menus]); // still the same position
+  assert.equal(states.get("9").deployed, false);
+  const spawned = { ...menus, x: 97435, y: -40247 };
+  states = updateDeployment(states, [spawned]);
+  assert.equal(withDeployment([spawned], states)[0].alive, true);
+});
+
+test("a body kept where it died is dead, then the player is alive once he moves", () => {
+  let states = updateDeployment(new Map(), [{ ...player("1", { x: 10 }), deaths: 0 }], { initial: true });
+  states = updateDeployment(states, [{ ...player("1", { x: 10 }), deaths: 1 }]); // died, body stays
+  assert.equal(states.get("1").deployed, false);
+  states = updateDeployment(states, [{ ...player("1", { alive: false }), deaths: 1 }]);
+  states = updateDeployment(states, [{ ...player("1", { x: 22 }), deaths: 1 }]); // respawned nearby
+  assert.equal(states.get("1").deployed, true);
 });

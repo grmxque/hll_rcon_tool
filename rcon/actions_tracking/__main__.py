@@ -37,7 +37,7 @@ def replay(
 def tracer(wanted: str):
     """Print, at each poll, what the server reported for one player (ID or part of the name):
     position, deaths, role, support, and the jumps and spawns the tracking saw."""
-    state = {"start": None, "previous": None}
+    state = {"start": None, "previous": {}}
 
     def on_poll(snapshot: PollSnapshot, engine: ActionsEngine) -> None:
         state["start"] = state["start"] or snapshot.ts
@@ -45,13 +45,16 @@ def tracer(wanted: str):
             if wanted != sample.player_id and wanted.lower() not in sample.name.lower():
                 continue
             notes = []
-            previous = state["previous"]
+            previous = state["previous"].get(sample.player_id)
             if previous is not None and sample.alive and previous.alive:
                 moved = math.hypot(sample.x - previous.x, sample.y - previous.y) / 100
                 if moved > 100:
                     notes.append(f"jump {moved:.0f} m")
             if previous is not None and sample.deaths > previous.deaths:
                 notes.append("death +1")
+            memory = engine.players.get(sample.player_id, {})
+            if sample.alive and not memory.get("deployed", True):
+                notes.append("not deployed (menus or body)")
             if any(
                 s["player_id"] == sample.player_id
                 for s in engine.spawns.at(snapshot.ts)
@@ -67,7 +70,7 @@ def tracer(wanted: str):
                 f"deaths={sample.deaths} role={sample.role} support={sample.support} "
                 + " ".join(notes)
             )
-            state["previous"] = sample
+            state["previous"][sample.player_id] = sample
 
     return on_poll
 
