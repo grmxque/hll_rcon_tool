@@ -2,10 +2,12 @@
 
     python -m rcon.actions_tracking replay <file.jsonl> [--player PLAYER_ID] [--all]
     python -m rcon.actions_tracking replay <file.jsonl> --trace <PLAYER_ID or name>
+    python -m rcon.actions_tracking replay <file.jsonl> --spawns
 
 The files are written by the ``record_actions_snapshots`` setting
 ($LOGGING_PATH/actions_snapshots). Prints each decision with its reason, then the actions per player
-and the TOP 3 garrison builders.
+and the TOP 3 garrison builders. ``--spawns`` prints the spawn points instead, as they were classified
+when last used.
 """
 
 import argparse
@@ -75,6 +77,32 @@ def tracer(wanted: str):
     return on_poll
 
 
+def spawn_points_tracer():
+    """Keep the last state of every spawn point, including those forgotten since."""
+    seen: dict[int, dict] = {}
+
+    def on_poll(snapshot: PollSnapshot, engine: ActionsEngine) -> None:
+        for point in engine.points.points:
+            seen[point["id"]] = dict(point)
+
+    return seen, on_poll
+
+
+def print_spawn_points(points: dict[int, dict], start: float | None, names) -> None:
+    start = start or 0
+    for point in sorted(points.values(), key=lambda p: (p["team"], p["first_ts"])):
+        credited = ", ".join(
+            f"{names.get(pid, pid)} {count}" for pid, count in point["credited"].items()
+        )
+        print(
+            f"#{point['id']:<3} {point['team']:<6} {point['kind']:<8} "
+            f"({point['x']:9.0f}, {point['y']:9.0f}) "
+            f"+{point['first_ts'] - start:6.0f}s..+{point['last_ts'] - start:6.0f}s "
+            f"spawns={point['spawns']} squads={point['squads']} "
+            f"credited=[{credited}] uncredited={point['uncredited']}: {point['reason']}"
+        )
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="python -m rcon.actions_tracking")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -96,17 +124,30 @@ def main(argv=None) -> int:
         "--trace",
         help="print every poll of this player (ID or part of the name): position, deaths…",
     )
+    replay_parser.add_argument(
+        "--spawns",
+        action="store_true",
+        help="print the spawn points: kind, squads, credits",
+    )
     args = parser.parse_args(argv)
 
+    points, on_points = spawn_points_tracer()
     engine, decisions = replay(
         args.file,
         {
             "garrison": args.garrison_roles.split(","),
             "node": args.node_roles.split(","),
         },
-        on_poll=tracer(args.trace) if args.trace else None,
+        on_poll=tracer(args.trace)
+        if args.trace
+        else on_points
+        if args.spawns
+        else None,
     )
     if args.trace:
+        return 0
+    if args.spawns:
+        print_spawn_points(points, engine.first_ts, engine.names)
         return 0
     for decision in decisions:
         if args.player and decision.player_id != args.player:

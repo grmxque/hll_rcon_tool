@@ -26,7 +26,8 @@ between two polls with the score sources that can produce it, within what the ga
 | --- | --- |
 | `model.py` | `PlayerSample` / `PollSnapshot` (polled data), `Decision` (diagnostics), `PlayerActions` (count per action and when it was reached), `rank_players()` |
 | `rules.py` | `ScoreTable` (what the game gives) and `GameRules` (what it makes impossible) |
-| `context.py` | `PollContext` given to the detectors: current samples, previous samples, support gains, `SpawnLedger` (teammate spawns and learned spawn points; a spawn credits a single player) |
+| `context.py` | `PollContext` given to the detectors: current samples, previous samples, support gains, spawns and spawn points |
+| `spawns.py` | `SpawnLedger` (recent teammate spawns and the spawn points learned for each player; a spawn credits a single player) and `SpawnPoints` (every spawn grouped by position and classified: HQ, garrison, outpost, airhead) |
 | `detectors/` | one `ActionDetector` per action (`garrison.py`, `node.py`), registered in `detectors/__init__.py` |
 | `engine.py` | `ActionsEngine`: counter checks (reconnection, team change, stats leak), spawns, runs the detectors, summary. Pure, JSON state |
 | `tracker.py` | Redis persistence, log loop entry point, end of match, snapshot recording |
@@ -143,6 +144,26 @@ garrison builder +3, never +5.
 **Data gaps** (more than 20 s between two polls: RCON outage, service restart): the positions during the gap
 are unknown, so a garrison built then cannot be confirmed and is not counted.
 
+## Spawn points
+
+`SpawnPoints` (`spawns.py`) groups every spawn the polls saw into points: a spawn joins the point of its team
+within 50 m, or starts a new one; the position is the mean of its spawns. A spawn joins its point 20 s after it
+happened, once the detectors had the time to give its credit to a spawn point owner. A point nobody used for
+20 min is forgotten (destroyed, moved, or no longer used). Each point keeps its spawns per squad, those of the
+commander and of players without a squad, the credits per owner and the uncredited spawns, and is classified:
+
+| Kind | Evidence |
+| --- | --- |
+| `garrison` | a garrison confirmed there, or it credits its owner and is used by several squads, the commander or players without a squad (they never use an outpost) |
+| `outpost` | it credits its owner and only his squad spawns there (at least 2 spawns) |
+| `hq` | at least 3 teammates spawned there without crediting anybody, and it was used within 3 min of the start of the tracked match, or for more than 10 min, or the commander spawned there |
+| `airhead` | at least 3 uncredited spawns of several squads, placed during the match, not an HQ (possible) |
+| `unknown` | anything else: one credited spawn, few uncredited spawns, uncredited spawns of one squad, the commander alone |
+
+Only officers and the commander get their spawn credits analysed (the garrison builder roles): the outposts of
+a spotter credit nobody that the tracking knows, so they are `unknown`. The airhead and HQ timings are
+assumptions to check against recorded matches (`replay --spawns`).
+
 ## Nodes
 
 Players whose role was in `node_builder_roles` (default `engineer`) are analysed, plus anyone who already has a
@@ -179,8 +200,10 @@ passive production stream (the nodes keep producing after a class change).
   ```bash
   python -m rcon.actions_tracking replay /logs/actions_snapshots/1_1762800000.jsonl [--player ID] [--all]
   python -m rcon.actions_tracking replay /logs/actions_snapshots/1_1762800000.jsonl --trace grmxque
+  python -m rcon.actions_tracking replay /logs/actions_snapshots/1_1762800000.jsonl --spawns
   ```
 
+  `--spawns` prints every spawn point of the match with its kind, squads, credits and the reason.
   `--trace` prints every poll of one player (ID or part of the name): position, deaths, role, support, jumps
   of more than 100 m and the spawns the tracking detected.
 
@@ -243,5 +266,6 @@ passive production stream (the nodes keep producing after a class change).
   2.5–4.5 s, optional outage) that measures the error rates against the ground truth, separating the garrisons
   someone spawned on. The simulation applies the same score table and rules: it tests the decision logic, not
   the game values.
+- `tests/test_actions_spawn_points.py`: spawn point grouping and classification.
 - `tests/test_actions_tracking.py`: Redis persistence, restart, idempotence, banner, recording and replay, log
   loop hook.

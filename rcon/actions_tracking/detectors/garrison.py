@@ -29,7 +29,6 @@ from rcon.actions_tracking.context import (
     SPAWN_POINT_TTL,
     Gain,
     PollContext,
-    SpawnLedger,
     distance,
 )
 from rcon.actions_tracking.detectors.base import ActionDetector
@@ -42,6 +41,7 @@ from rcon.actions_tracking.model import (
     PlayerSample,
 )
 from rcon.actions_tracking.rules import ScoreTable
+from rcon.actions_tracking.spawns import SpawnLedger
 
 CONFIRMATION_SECONDS = 300.0
 # Unexplained points tolerated besides a construction (bandages, sources missing from the table).
@@ -748,6 +748,8 @@ class GarrisonDetector(ActionDetector):
             {"ts": candidate["ts"], "x": x, "y": y, "team": candidate["team"]}
         )
         ctx.spawns.learn(player_id, x, y, ctx.ts, "garrison")
+        if ctx.points is not None:
+            ctx.points.garrison_confirmed(player_id, x, y, candidate["team"])
         decisions = [
             Decision(
                 ctx.ts,

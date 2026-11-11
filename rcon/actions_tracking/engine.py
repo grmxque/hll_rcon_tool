@@ -14,7 +14,6 @@ from rcon.actions_tracking.context import (
     SPAWN_HISTORY_SECONDS,
     Gain,
     PollContext,
-    SpawnLedger,
 )
 from rcon.actions_tracking.detectors import DETECTORS, ActionDetector
 from rcon.actions_tracking.model import (
@@ -32,6 +31,7 @@ from rcon.actions_tracking.rules import (
     GameRules,
     ScoreTable,
 )
+from rcon.actions_tracking.spawns import SpawnLedger, SpawnPoints
 
 
 class ActionsEngine:
@@ -53,7 +53,10 @@ class ActionsEngine:
         self.players: dict[str, dict] = state.get("players", {})
         self.names: dict[str, str] = state.get("names", {})
         self.finalized: bool = state.get("finalized", False)
+        # First poll of the tracked match: the HQ points are used from the start.
+        self.first_ts: float | None = state.get("first_ts")
         self.spawns = SpawnLedger(state.get("spawns"))
+        self.points = SpawnPoints(state.get("spawn_points"))
         detector_states = state.get("detectors", {})
         self.detectors: dict[str, ActionDetector] = {
             cls.action: cls(
@@ -71,7 +74,9 @@ class ActionsEngine:
             "players": self.players,
             "names": self.names,
             "finalized": self.finalized,
+            "first_ts": self.first_ts,
             "spawns": self.spawns.to_state(),
+            "spawn_points": self.points.to_state(),
             "detectors": {
                 action: detector.to_state()
                 for action, detector in self.detectors.items()
@@ -119,12 +124,16 @@ class ActionsEngine:
             names=self.names,
             gains=gains,
             spawns=self.spawns,
+            points=self.points,
         )
         for detector in self.detectors.values():
             decisions += detector.observe(ctx)
 
         for player_id, sample in current.items():
             self._remember(sample, raw[player_id], ts)
+        if self.first_ts is None:
+            self.first_ts = ts
+        self.points.update(self.spawns, ts, self.first_ts)
         self.spawns.prune(ts)
         self.last_ts = ts
         return decisions
