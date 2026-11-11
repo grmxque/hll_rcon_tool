@@ -1,8 +1,9 @@
 """Seeded simulation of a match to measure the detection error rates against a known ground truth.
 
 The simulation applies the score table of ``ScoreTable`` to random but plausible gameplay: deaths and
-synchronised respawn waves (HQ, the squad outpost, any garrison of the team), garrisons built by
-officers, nodes and repair stations built by engineers, passive income of nodes and outposts,
+synchronised respawn waves (one of the 3 HQs, the squad outpost, an airhead, any garrison of the team),
+outposts moved by their officer, the commander dying and respawning (HQ or garrison), airheads, garrisons
+built by officers, nodes and repair stations built by engineers, passive income of nodes and outposts,
 commander abilities, marking and blowtorch repairs. Polls happen every 2.5 to 4.5 seconds, with an
 optional outage. It is a stress test of the decision logic, not a model of the real game: the real
 values and timings must still be validated in game (see docs/actions-tracking.md).
@@ -20,6 +21,7 @@ from rcon.actions_tracking.model import (
 
 MAP_SIZE = 2_000.0  # metres
 RESPAWN_WAVE = 20  # seconds
+AIRHEAD_SECONDS = 180  # assumption: an airhead stays a few minutes
 CONFIRMATION_WINDOW = 300  # seconds, as CONFIRMATION_SECONDS in the garrison detector
 
 
@@ -48,6 +50,10 @@ class Truth:
     # never be counted (nothing confirms them), by design.
     used_garrisons: dict[str, set[int]] = field(default_factory=dict)
     nodes: dict[str, int] = field(default_factory=dict)
+    # Every spawn point that existed: {kind, team, x, y} in metres.
+    points: list[dict] = field(default_factory=list)
+    # Classification of the engine's points, last seen state per point id: (kind, true kind).
+    classified: dict[int, tuple[str, str]] = field(default_factory=dict)
 
 
 class Simulation:
@@ -61,7 +67,16 @@ class Simulation:
         self.outposts: dict[str, tuple[float, float]] = {}
         self.garrisons: list[tuple[str, str, float, float]] = []  # builder, team, x, y
         self.truth = Truth()
-        self.hq = {"allies": (100.0, 100.0), "axis": (1900.0, 1900.0)}
+        # 3 HQs per team, along its edge of the map.
+        self.hqs = {
+            "allies": [(100.0, 300.0), (100.0, 1000.0), (100.0, 1700.0)],
+            "axis": [(1900.0, 300.0), (1900.0, 1000.0), (1900.0, 1700.0)],
+        }
+        self.hq = {team: hqs[1] for team, hqs in self.hqs.items()}
+        self.airheads: list[tuple[str, float, float, int]] = []  # team, x, y, placed at
+        for team, hqs in self.hqs.items():
+            for x, y in hqs:
+                self.truth.points.append({"kind": "hq", "team": team, "x": x, "y": y})
         for team in ("allies", "axis"):
             for unit in range(5):
                 for index, role in enumerate(
@@ -71,10 +86,14 @@ class Simulation:
                     self.players[player_id] = SimPlayer(
                         player_id, team, unit, role, *self._random_pos()
                     )
-                self.outposts[f"{team}-{unit}-0"] = self._random_pos()
+                self._place_outpost(f"{team}-{unit}-0", team, *self._random_pos())
             self.players[f"{team}-cmd"] = SimPlayer(
                 f"{team}-cmd", team, -1, "armycommander", *self.hq[team]
             )
+
+    def _place_outpost(self, officer_id: str, team: str, x: float, y: float) -> None:
+        self.outposts[officer_id] = (x, y)
+        self.truth.points.append({"kind": "outpost", "team": team, "x": x, "y": y})
 
     def _random_pos(self) -> tuple[float, float]:
         return self.rng.uniform(0, MAP_SIZE), self.rng.uniform(0, MAP_SIZE)
@@ -88,9 +107,25 @@ class Simulation:
                 in_outage = self.outage and self.outage[0] <= second < self.outage[1]
                 if not in_outage:
                     decisions += engine.observe(self._snapshot(second))
+                    self._check_points(engine)
                 next_poll = second + self.rng.uniform(2.5, 4.5)
         decisions += engine.finalize(float(self.duration))
         return decisions
+
+    def _check_points(self, engine: ActionsEngine) -> None:
+        """Compare the kind of each engine spawn point with the real point closest to it."""
+        for point in engine.points.points:
+            x, y = point["x"] / 100, point["y"] / 100
+            real = min(
+                (p for p in self.truth.points if p["team"] == point["team"]),
+                key=lambda p: math.hypot(p["x"] - x, p["y"] - y),
+            )
+            true_kind = (
+                real["kind"]
+                if math.hypot(real["x"] - x, real["y"] - y) <= 30
+                else "none"
+            )
+            self.truth.classified[point["id"]] = (point["kind"], true_kind)
 
     def _snapshot(self, second: int) -> PollSnapshot:
         return PollSnapshot(
@@ -119,7 +154,8 @@ class Simulation:
                 if player.respawn_at is not None and second >= player.respawn_at:
                     self._respawn(player, second)
                 continue
-            if player.role != "armycommander" and rng.random() < 1 / 150:
+            death_rate = 1 / 600 if player.role == "armycommander" else 1 / 150
+            if rng.random() < death_rate:
                 player.alive = False
                 player.deaths += 1
                 # Synchronised waves: everybody dead long enough spawns at the next wave.
@@ -134,6 +170,7 @@ class Simulation:
         for garrison in list(self.garrisons):
             if rng.random() < 1 / 400:
                 self.garrisons.remove(garrison)
+        self.airheads = [a for a in self.airheads if second - a[3] < AIRHEAD_SECONDS]
         # Passive income: outposts (to their officer) and nodes (to their builder).
         for officer_id in self.outposts:
             if second % 60 == 17:
@@ -167,6 +204,8 @@ class Simulation:
                 self._build_garrison(player, second)
             elif rng.random() < 1 / 120:
                 player.support += 5  # marking
+            elif rng.random() < 1 / 600:
+                self._place_outpost(player.player_id, player.team, player.x, player.y)
         elif player.role == "engineer":
             # Game rules: one node of each type per player, 9 per team.
             if (
@@ -184,7 +223,15 @@ class Simulation:
             elif rng.random() < 1 / 200:
                 player.support += 5  # blowtorch
         elif player.role == "armycommander":
-            if rng.random() < 1 / 120:
+            if rng.random() < 1 / 900:
+                # Airhead, placed from the map far from him: everybody can spawn on it.
+                x, y = self._random_pos()
+                self.airheads.append((player.team, x, y, second))
+                self.truth.points.append(
+                    {"kind": "airhead", "team": player.team, "x": x, "y": y}
+                )
+                player.support += 50
+            elif rng.random() < 1 / 120:
                 player.support += rng.choice([50, 50, 75, 100])  # abilities
             elif rng.random() < 1 / 600 and second - player.last_garrison >= 30:
                 # Drives somewhere on the map and builds a garrison there.
@@ -199,6 +246,9 @@ class Simulation:
         self._consume_supplies(player, own=0.3, officer=0.2, support=0.3)
         self.garrisons.append(
             (player.player_id, player.team, player.x, player.y, second)
+        )
+        self.truth.points.append(
+            {"kind": "garrison", "team": player.team, "x": player.x, "y": player.y}
         )
         self.truth.garrisons[player.player_id] = (
             self.truth.garrisons.get(player.player_id, 0) + 1
@@ -228,8 +278,10 @@ class Simulation:
 
     def _garrison_spot_free(self, player: SimPlayer) -> bool:
         """200 m from the team's garrisons, and away from the HQ (a garrison there is useless)."""
-        hq_x, hq_y = self.hq[player.team]
-        return math.hypot(player.x - hq_x, player.y - hq_y) >= 100 and all(
+        return all(
+            math.hypot(player.x - hq_x, player.y - hq_y) >= 100
+            for hq_x, hq_y in self.hqs[player.team]
+        ) and all(
             math.hypot(player.x - x, player.y - y) >= 200
             for _, team, x, y, _built in self.garrisons
             if team == player.team
@@ -240,10 +292,18 @@ class Simulation:
 
     def _respawn(self, player: SimPlayer, second: int) -> None:
         rng = self.rng
-        options = [("hq", None, self.hq[player.team])]
+        options = [("hq", None, rng.choice(self.hqs[player.team]))]
         officer_id = f"{player.team}-{player.unit_id}-0"
-        if officer_id in self.outposts and officer_id != player.player_id:
+        commander = player.role == "armycommander"
+        if (
+            not commander
+            and officer_id in self.outposts
+            and officer_id != player.player_id
+        ):
             options.append(("outpost", officer_id, self.outposts[officer_id]))
+        for team, x, y, _placed in self.airheads:
+            if team == player.team and not commander:
+                options.append(("airhead", None, (x, y)))
         for builder, team, x, y, built in self.garrisons:
             if team == player.team:
                 options.append(("garrison", (builder, built), (x, y)))
@@ -251,7 +311,10 @@ class Simulation:
         builder = owner
         if kind == "garrison":
             builder, built = owner
-            if second - built <= CONFIRMATION_WINDOW and builder != player.player_id:
+            # The commander's own spawn on his garrison confirms it too.
+            if second - built <= CONFIRMATION_WINDOW and (
+                builder != player.player_id or commander
+            ):
                 self.truth.used_garrisons.setdefault(builder, set()).add(built)
         player.x, player.y = x + rng.uniform(-10, 10), y + rng.uniform(-10, 10)
         player.alive = True
@@ -276,6 +339,9 @@ def score(engine: ActionsEngine, truth: Truth) -> dict:
         fp += max(0, detected - real)
         fn += max(0, real - detected)
         fn_used += max(0, used - detected)
+    classified = {}
+    for kind, true_kind in truth.classified.values():
+        classified[(kind, true_kind)] = classified.get((kind, true_kind), 0) + 1
     node_detected = {pid for pid, actions in summary.items() if actions.count("node")}
     node_real = set(truth.nodes)
     return {
@@ -288,4 +354,6 @@ def score(engine: ActionsEngine, truth: Truth) -> dict:
         "node_tp": len(node_detected & node_real),
         "node_fp": len(node_detected - node_real),
         "node_fn": len(node_real - node_detected),
+        # (engine kind, true kind) -> number of points
+        "points": classified,
     }

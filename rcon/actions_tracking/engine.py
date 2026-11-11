@@ -130,7 +130,7 @@ class ActionsEngine:
             decisions += detector.observe(ctx)
 
         for player_id, sample in current.items():
-            self._remember(sample, raw[player_id], ts)
+            self._remember(sample, raw[player_id], ts, global_gap)
         if self.first_ts is None:
             self.first_ts = ts
         self.points.update(self.spawns, ts, self.first_ts)
@@ -220,9 +220,21 @@ class ActionsEngine:
             return True
         return position != tuple(prev.get("raw", (0.0, 0.0, 0.0)))
 
-    def _remember(self, sample: PlayerSample, raw: PlayerSample, ts: float) -> None:
-        """``sample`` as the detectors saw it (undeployed: at (0, 0, 0)), ``raw`` as reported."""
+    def _remember(
+        self, sample: PlayerSample, raw: PlayerSample, ts: float, gap: bool = False
+    ) -> None:
+        """``sample`` as the detectors saw it (undeployed: at (0, 0, 0)), ``raw`` as reported.
+
+        ``gap``: the polls stopped before this one. A player back in the game with a new death
+        respawned during the gap, somewhere unknown: his next move is not a spawn.
+        """
         prev = self.players.get(sample.player_id)
+        respawned_unseen = (
+            gap
+            and prev is not None
+            and raw.deaths > prev["deaths"]
+            and (raw.x, raw.y, raw.z) != (0.0, 0.0, 0.0)
+        )
         raw_position = (raw.x, raw.y, raw.z)
         if prev is None and raw_position != (0.0, 0.0, 0.0):
             # First seen at a position: if he only walks from there he was already in the game
@@ -252,4 +264,5 @@ class ActionsEngine:
             "raw": list(raw_position),
             "last_alive": last_alive,
             "deaths_alive": deaths_alive,
+            "respawned_unseen": respawned_unseen,
         }

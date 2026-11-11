@@ -56,6 +56,8 @@ class SpawnLedger:
             prev = players.get(player_id)
             if prev is None:
                 spawned = not first_poll  # connected and deployed between two polls
+            elif prev.get("respawned_unseen"):
+                spawned = False  # respawned during a data gap, somewhere unknown
             elif not prev["alive"]:
                 # Back alive where they went down without a new death: revived, not respawned.
                 last = prev.get("last_alive")
@@ -230,6 +232,10 @@ UNCREDITED_SPAWNS = 3
 # an HQ: an airhead is placed during the match and only lasts a few minutes.
 HQ_EARLY_SECONDS = 180.0
 HQ_LIFETIME_SECONDS = 600.0
+# Share of the spawns crediting the same player for the point to be his (garrison, outpost), and
+# share of one squad for an owned point to be an outpost (squad only).
+OWNED_SHARE = 0.5
+OUTPOST_SQUAD_SHARE = 0.8
 
 
 def unit_key(unit_id: int | None) -> str:
@@ -238,23 +244,30 @@ def unit_key(unit_id: int | None) -> str:
 
 
 def classify(point: dict, match_start: float | None) -> tuple[str, str]:
-    """Kind of a spawn point and the reason, from the spawns settled on it."""
+    """Kind of a spawn point and the reason, from the spawns settled on it.
+
+    A credit is not certain proof of ownership: when several spawns can explain a gain, the
+    detectors may give one at the HQ to an officer whose outpost was used elsewhere. So a point is
+    owned only if most of its spawns credited the same player.
+    """
     if point.get("garrison"):
         return GARRISON, "a confirmed garrison"
-    squads = {unit for unit in point["squads"] if unit not in (NO_SQUAD, "-1")}
+    spawns = point["spawns"]
+    owner_credits = max(point["credited"].values(), default=0)
+    main_squad = max(point["squads"].values(), default=0)
     no_outpost = point["commander"] + point["no_squad"]
-    credited = point["credited"]
-    if credited:
-        if len(squads) >= 2 or no_outpost:
-            return GARRISON, "credits its owner, used by several squads"
-        if point["spawns"] >= 2 and len(credited) == 1:
-            return OUTPOST, "credits its owner, used by one squad only"
-        return UNKNOWN, "credits its owner, used once"
-    others = point["uncredited"] - point["commander"]
-    if others < UNCREDITED_SPAWNS:
+    if spawns == 1:
+        return UNKNOWN, "used once"
+    if owner_credits >= OWNED_SHARE * spawns:
+        if no_outpost == 0 and main_squad >= OUTPOST_SQUAD_SHARE * spawns:
+            return OUTPOST, "credits its owner, used by one squad"
+        return GARRISON, "credits its owner, used by several squads"
+    uncredited = spawns - owner_credits - point["commander"]
+    if uncredited < UNCREDITED_SPAWNS:
         if point["commander"]:
             return UNKNOWN, "only the commander spawned there (HQ or his own garrison)"
-        return UNKNOWN, "few spawns, crediting nobody"
+        return UNKNOWN, "few spawns"
+    squads = {unit for unit in point["squads"] if unit not in (NO_SQUAD, "-1")}
     early = (
         match_start is not None and point["first_ts"] - match_start <= HQ_EARLY_SECONDS
     )
@@ -278,16 +291,20 @@ class SpawnPoints:
         self.next_id: int = state.get("next_id", 1)
         # Confirmed garrisons [{x, y, team, owner}]: the points there are garrisons.
         self.garrisons: list[dict] = state.get("garrisons", [])
+        # First poll of the tracked match.
+        self.match_start: float | None = state.get("match_start")
 
     def to_state(self) -> dict:
         return {
             "points": self.points,
             "next_id": self.next_id,
             "garrisons": self.garrisons,
+            "match_start": self.match_start,
         }
 
     def update(self, ledger: SpawnLedger, ts: float, match_start: float | None) -> None:
         """Add the spawns settled since the last update, classify, forget unused points."""
+        self.match_start = match_start
         for spawn in ledger.spawns:
             if "point" not in spawn and ts - spawn["ts"] >= SETTLE_SECONDS:
                 spawn["point"] = self._add(spawn)["id"]
@@ -310,6 +327,10 @@ class SpawnPoints:
             if p["team"] == team and self._near(p, x, y)
         ]
         return min(found, key=lambda f: f[0])[1] if found else None
+
+    def early(self, ts: float) -> bool:
+        """Within the first minutes of the tracked match: the HQ points are not known yet."""
+        return self.match_start is None or ts - self.match_start <= HQ_EARLY_SECONDS
 
     def of_kind(self, *kinds: str) -> list[dict]:
         return [p for p in self.points if p["kind"] in kinds]

@@ -10,7 +10,9 @@ Between two polls, the gain of a player whose role can build a garrison is expla
 A gain that a garrison can explain only makes a **candidate**. Several sources give the same +50
 (commander abilities, the supplies of a player consumed by someone else's construction, a spawn
 wave), so a garrison is only counted once teammates spawn at its position **and** the builder gets
-the matching spawn credits: only the owner of a spawn point gets them. A candidate nobody spawned on
+the matching spawn credits: only the owner of a spawn point gets them. Spawns of his squad alone may be
+on an outpost he just placed there, and nothing is confirmed on a spawn point classified as an HQ or an
+airhead (``spawns.py``). A candidate nobody spawned on
 within ``CONFIRMATION_SECONDS`` stays dormant until the end of the match: it can still be confirmed
 later, also by teammates of several squads spawning on it (an outpost only takes its squad).
 
@@ -41,7 +43,7 @@ from rcon.actions_tracking.model import (
     PlayerSample,
 )
 from rcon.actions_tracking.rules import ScoreTable
-from rcon.actions_tracking.spawns import SpawnLedger
+from rcon.actions_tracking.spawns import AIRHEAD, HQ, OUTPOST, SpawnLedger
 
 CONFIRMATION_SECONDS = 300.0
 # Unexplained points tolerated besides a construction (bandages, sources missing from the table).
@@ -424,7 +426,16 @@ class GarrisonDetector(ActionDetector):
             waves = []
             for candidate in self.candidates:
                 if candidate["player_id"] == player_id:
+                    if self._on_spawn_point_of_nobody(ctx, candidate):
+                        continue
                     wave = self._wave_at(ctx, candidate)
+                    if wave and self._own_squad_only(ctx, candidate, wave):
+                        # His spawn point (garrison or outpost): a spawn of anybody else than
+                        # his squad will tell.
+                        candidate["credits_squad"] = True
+                        wave = []
+                    if not wave and candidate.get("credits_squad"):
+                        wave = self._other_squad_spawn_at(ctx, candidate)
                     if not wave and candidate.get("dormant"):
                         wave = self._squads_wave_at(ctx, candidate)
                     if not wave:
@@ -454,6 +465,73 @@ class GarrisonDetector(ActionDetector):
                 )
         return decisions
 
+    @staticmethod
+    def _on_spawn_point_of_nobody(ctx: PollContext, candidate: dict) -> bool:
+        """The candidate is on a spawn point that credits nobody: an HQ or an airhead."""
+        if ctx.points is None:
+            return False
+        point = ctx.points.near(candidate["team"], candidate["x"], candidate["y"])
+        return point is not None and point["kind"] in (HQ, AIRHEAD)
+
+    @staticmethod
+    def _own_squad_only(ctx: PollContext, candidate: dict, wave: list[dict]) -> bool:
+        """Only the builder's squad spawned, and it may be an outpost he just placed there (+5 per
+        squad member too).
+
+        Not an outpost if his squad still spawns on another of his points since the candidate: a
+        squad has one outpost at a time. Otherwise a spawn of another squad, of the commander or of
+        a player without a squad is needed.
+        """
+        player_id = candidate["player_id"]
+        builder = ctx.current.get(player_id)
+        unit = builder.unit_id if builder else ctx.players[player_id]["unit_id"]
+        if any(s["unit_id"] != unit for s in wave):
+            return False
+        outpost_elsewhere = ctx.points is not None and any(
+            p["team"] == candidate["team"]
+            and p["last_ts"] > candidate["ts"]
+            and max(p["credited"], key=p["credited"].get) == player_id
+            and distance(p["x"], p["y"], candidate["x"], candidate["y"])
+            > SAME_GARRISON_DISTANCE
+            for p in ctx.points.of_kind(OUTPOST)
+        )
+        return not outpost_elsewhere
+
+    def _other_squad_spawn_at(self, ctx: PollContext, candidate: dict) -> list[dict]:
+        """Spawns on a candidate already crediting its builder's squad, by teammates who cannot
+        use his outpost: another squad, the commander, a player without a squad. The builder, if
+        connected in the team, must have got a spawn credit in this poll: the spawn may be on a
+        teammate's garrison next to it, not known yet."""
+        player_id = candidate["player_id"]
+        builder = ctx.current.get(player_id)
+        gain = ctx.gains.get(player_id)
+        if (
+            builder is not None
+            and builder.team == candidate["team"]
+            and (gain is None or gain.is_gap or gain.points < self.table.spawn_team)
+        ):
+            return []
+        unit = builder.unit_id if builder else ctx.players[player_id]["unit_id"]
+        foreign = self._foreign(ctx, candidate)
+
+        def on_candidate(spawn: dict) -> bool:
+            here = distance(spawn["x"], spawn["y"], candidate["x"], candidate["y"])
+            return here <= SPAWN_POINT_RADIUS and all(
+                here + CONFIRMATION_MARGIN
+                < distance(spawn["x"], spawn["y"], p["x"], p["y"])
+                for p in foreign
+            )
+
+        return [
+            s
+            for s in ctx.spawns.at(ctx.ts)
+            if s["team"] == candidate["team"]
+            and s["player_id"] != player_id
+            and s["unit_id"] != unit
+            and s["credited_to"] in (None, player_id)
+            and on_candidate(s)
+        ]
+
     def _commander_spawn_at(self, ctx: PollContext, candidate: dict) -> list[dict]:
         """A commander spawning on his own candidate: a commander only spawns at the HQ, on a
         garrison or on an airhead, never on an outpost.
@@ -479,6 +557,10 @@ class GarrisonDetector(ActionDetector):
             for x, y, ts in self.commander_spawns.get(player_id, [])
         )
         if spawned_there_before or self._uncredited_spawn_point(ctx, candidate):
+            return []
+        # At the start of the match the commander stands at the HQ: an ability used there then a
+        # respawn there looks like a garrison until the HQ point is known.
+        if ctx.points is not None and ctx.points.early(candidate["ts"]):
             return []
         foreign = self._foreign(ctx, candidate)
         spawn = mine[0]
@@ -595,7 +677,11 @@ class GarrisonDetector(ActionDetector):
         # Spawn points and candidates of teammates: spawns near them are theirs. A dormant candidate
         # is checked against them too: a teammate may have built a garrison next to it since.
         foreign = self._foreign(ctx, candidate)
-        excluded = known_before + (foreign if candidate.get("dormant") else [])
+        excluded = (
+            known_before
+            + (foreign if candidate.get("dormant") else [])
+            + self._garrisons_of_others(candidate)
+        )
 
         def on_candidate(spawn: dict) -> bool:
             here = distance(spawn["x"], spawn["y"], candidate["x"], candidate["y"])
@@ -628,6 +714,16 @@ class GarrisonDetector(ActionDetector):
         if self._wave_credited(points - built, others, wave, builder, fives):
             return wave
         return []
+
+    def _garrisons_of_others(self, candidate: dict) -> list[dict]:
+        """Confirmed garrisons of the builder's teammates: spawns next to them are theirs."""
+        return [
+            garrison
+            for player_id, built in self.garrisons.items()
+            if player_id != candidate["player_id"]
+            for garrison in built
+            if garrison["team"] == candidate["team"]
+        ]
 
     def _foreign(self, ctx: PollContext, candidate: dict) -> list[dict]:
         """Spawn points and candidates of the builder's teammates."""

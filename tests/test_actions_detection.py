@@ -6,6 +6,7 @@ import pytest
 
 from rcon.actions_tracking.engine import ActionsEngine
 from rcon.actions_tracking.model import PollSnapshot
+from rcon.actions_tracking.spawns import SETTLE_SECONDS
 from tests.actions_scenarios import HQ, Match
 
 GARRISON = (800.0, 800.0)
@@ -55,9 +56,10 @@ def build(m, builder, at, points=50):
 
 
 def build_known_garrison(m, officer="off", at=GARRISON):
-    """The officer builds a garrison at ``at``, teammates spawn on it, he walks away."""
+    """The officer builds a garrison at ``at``, teammates of another squad spawn on it, he walks
+    away."""
     build(m, officer, at)
-    confirm(m, officer, at)
+    confirm(m, officer, at, team=("a0", "a1") if officer == "off2" else ("b0", "b1"))
     m.move(officer, (at[0] + 200, at[1] + 200))
     m.poll()
 
@@ -322,7 +324,7 @@ def test_wave_on_another_builders_spawn_point_does_not_hide_a_garrison(match):
     match.gain("off2", 75)
     match.gain("off", 50)  # 15 teammates x 3 + 5 would also give 50
     match.poll()
-    confirm(match, "off", (900.0, 900.0), squad=("a0", "a1"), team=())
+    confirm(match, "off", (900.0, 900.0), squad=("a0", "a1"), team=("b0",))
     assert match.garrisons("off") == 1
     assert match.garrisons("off2") == 1
 
@@ -724,25 +726,47 @@ def simulate(seeds, **kwargs):
         engine = ActionsEngine()
         simulation.run(engine)
         for key, value in score(engine, simulation.truth).items():
-            total[key] = total.get(key, 0) + value
+            if key == "points":
+                points = total.setdefault("points", {})
+                for kinds, count in value.items():
+                    points[kinds] = points.get(kinds, 0) + count
+            else:
+                total[key] = total.get(key, 0) + value
     return total
+
+
+def precision(points: dict, kind: str) -> float:
+    found = sum(
+        count for (engine_kind, _), count in points.items() if engine_kind == kind
+    )
+    return points.get((kind, kind), 0) / found
 
 
 def test_simulated_matches_error_rates():
     result = simulate(range(12))
     # Garrisons nobody spawned on within 5 minutes are not countable, by design. Among the
-    # others, misses come from spawn waves mixed with other gains of the builder.
+    # others, misses come from garrisons only the builder's squad used (an outpost gives the same
+    # credits) and from spawn waves mixed with other gains of the builder.
     assert result["garrison_fp"] <= 1
-    assert result["garrison_fn_used"] <= 0.05 * result["garrison_used"]
+    assert result["garrison_fn_used"] <= 0.09 * result["garrison_used"]
     assert result["node_fn"] <= 1
     assert result["node_fp"] <= 1  # repair station in the last 150 s of a match
+
+
+def test_simulated_spawn_points():
+    points = simulate(range(12))["points"]
+    # Points used once stay unknown; the others are classified from their credits and squads.
+    assert precision(points, "hq") >= 0.85
+    assert precision(points, "airhead") >= 0.9
+    assert precision(points, "outpost") >= 0.95
+    assert precision(points, "garrison") >= 0.9
 
 
 def test_simulated_matches_with_an_outage():
     result = simulate(range(12), outage=(600, 690))
     assert result["garrison_fp"] <= 1
     # Garrisons built during the outage cannot be confirmed (their position is unknown).
-    assert result["garrison_fn_used"] <= 0.11 * result["garrison_used"]
+    assert result["garrison_fn_used"] <= 0.14 * result["garrison_used"]
 
 
 # Deployment screen and menus (seen in game, tests/fixtures/actions/deployment_screen.jsonl)
@@ -812,6 +836,7 @@ def respawn(m, player_id, at):
 
 
 def test_commander_spawning_on_his_own_garrison_confirms_it(match):
+    match.idle(200)  # at the start of the match the commander stands at the HQ
     build(match, "cmd", (1300.0, 1300.0))
     respawn(match, "cmd", (1302.0, 1301.0))  # alone on the server: no teammate credit
     assert match.garrisons("cmd") == 1
@@ -870,3 +895,73 @@ def test_player_without_a_squad_on_a_dormant_candidate_confirms_it(match):
     match.gain("off", 3 + 1)
     match.poll()
     assert match.garrisons("off") == 1
+
+
+# Spawn points (rcon/actions_tracking/spawns.py) in the confirmation
+
+
+def test_own_squad_only_does_not_confirm_then_another_squad_does(match):
+    build(match, "off", GARRISON)
+    confirm(
+        match, "off", GARRISON, squad=("a0", "a1"), team=()
+    )  # maybe his new outpost
+    assert match.garrisons("off") == 0
+    confirm(match, "off", GARRISON, team=("b0",))  # squad B cannot use his outpost
+    assert match.garrisons("off") == 1
+
+
+def test_own_squad_only_confirms_when_his_outpost_is_elsewhere(match):
+    outpost = (300.0, 900.0)
+    match.idle(200)
+    for squad in (("a0", "a1"), ("a2", "a3")):
+        wave(match, outpost, squad=squad, credited="off")
+    build(match, "off", GARRISON)
+    wave(
+        match, outpost, squad=("a4", "a5"), credited="off"
+    )  # his outpost is still there
+    match.idle(SETTLE_SECONDS)
+    confirm(match, "off", GARRISON, squad=("a6", "a7"), team=())
+    assert match.garrisons("off") == 1
+
+
+def test_nothing_confirms_a_candidate_on_the_hq(match):
+    wave(match, HQ, squad=("a0", "a1"), team=("b0", "b1"))
+    # Those spawns are out of the 5 min spawn history; the HQ point remains.
+    match.idle(330)
+    build(match, "off", (HQ[0] + 10, HQ[1]))  # supplies consumed at the HQ
+    # A wave at the HQ whose credits happen to match.
+    confirm(match, "off", (HQ[0] + 10, HQ[1]), team=("b2", "b3"))
+    assert match.garrisons("off") == 0
+
+
+def test_commander_at_the_hq_at_the_start_of_the_match(match):
+    build(
+        match, "cmd", (100.0, 100.0)
+    )  # ability at the HQ before anybody spawned there
+    respawn(match, "cmd", (101.0, 100.0))
+    match.idle(310)
+    match.finalize()
+    assert match.garrisons("cmd") == 0
+
+
+def test_spawns_next_to_a_teammates_garrison_are_his(match):
+    build_known_garrison(match, officer="off2", at=(1000.0, 1000.0))
+    build(match, "off", (1025.0, 1000.0))  # off's supplies consumed by off2's garrison
+    # One of his squad on his outpost there, one of squad B on off2's garrison.
+    wave(match, (1027.0, 1000.0), squad=("a0",))
+    wave(match, (1000.0, 1000.0), team=("b0",), credited=None)
+    match.gain("off", 5 + 3)
+    match.poll()
+    match.idle(310)
+    match.finalize()
+    assert match.garrisons("off") == 0
+
+
+def test_respawn_during_a_data_gap_is_not_a_spawn_where_he_walks_to(match):
+    # Data gap: he died, respawned somewhere and walked back.
+    match.players["off"].deaths += 1
+    match.move("off", (905.0, 900.0))
+    match.poll(after=60)
+    match.move("off", (906.0, 900.0))
+    match.poll()
+    assert not [s for s in match.engine.spawns.spawns if s["player_id"] == "off"]

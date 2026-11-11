@@ -64,7 +64,12 @@ def point(**values):
             GARRISON,
         ),
         (
-            {"spawns": 1, "squads": {"none": 1}, "no_squad": 1, "credited": {"off": 1}},
+            {
+                "spawns": 2,
+                "squads": {"none": 1, "0": 1},
+                "no_squad": 1,
+                "credited": {"off": 2},
+            },
             GARRISON,
         ),
         ({"spawns": 3, "squads": {"0": 3}, "credited": {"off": 3}}, OUTPOST),

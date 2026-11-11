@@ -114,10 +114,18 @@ can come one poll after it):
   and the value of a garrison he built in the same poll (+50, or +100 on his own supplies);
 - in that explanation, the spawns on his own known points are all counted first (they do credit him), and the
   wave is still needed: otherwise those teammates spawned at a point that credits nobody. Spawns also near
-  another player's spawn point or candidate are not counted as his;
+  another player's spawn point or candidate, or clearly closer to a teammate's confirmed garrison, are not
+  counted as his;
+- the wave is not only made of the builder's own squad: an outpost he just placed there gives the same +5 per
+  squad member. A squad-only wave is enough when his squad also spawned, since the candidate, on an outpost of
+  his elsewhere (a squad has one outpost at a time). Otherwise the candidate waits for a spawn of another
+  squad, of the commander or of a player without a squad on it, in a poll where the builder got a spawn
+  credit;
 - the spot is not an HQ: at least 3 teammates spawned there without crediting anybody before the
   candidate existed, or since then while the builder, connected, gained nothing in that poll nor in the
   next one. A wave whose credits did not match exactly does not count: the builder did gain something.
+  Nor is it on a spawn point classified `hq` or `airhead` (see [Spawn points](#spawn-points)): they credit
+  nobody.
 
 Only the owner of a spawn point gets credits, so HQ spawns next to a commander, or next to an officer whose
 supplies were just consumed by someone else, confirm nothing. When a builder has several candidates near the
@@ -135,13 +143,16 @@ the commander, or a player without a squad.
 The commander only spawns at the HQ or on a garrison. His own spawn within 50 m of one of his candidates, after
 it was created, confirms it (it credits nobody, so the exact rule above cannot see it), unless he had already
 spawned at that spot before the candidate (an HQ), teammates spawned there without crediting anybody (an HQ),
-or the spawn is not clearly closer to the candidate (15 m) than to a teammate's spawn point or candidate.
-Dormant candidates are rejected at the end of the match.
+or the spawn is not clearly closer to the candidate (15 m) than to a teammate's spawn point or candidate. Nor
+for a candidate made in the first 3 min of the tracked match: the commander stands at the HQ then, and the HQ
+point is not known yet. Dormant candidates are rejected at the end of the match.
 
 Players without a squad have no unit (CRCON gives `unit_id` 0 to both Able and them): their spawn credits a
 garrison builder +3, never +5.
 
-**Data gaps** (more than 20 s between two polls: RCON outage, service restart): the positions during the gap
+**Data gaps** (more than 20 s between two polls: RCON outage, service restart): a player back in the game with
+a new death after the gap respawned during it, somewhere unknown, so his next move is not taken as a spawn. The
+positions during the gap
 are unknown, so a garrison built then cannot be confirmed and is not counted.
 
 ## Spawn points
@@ -237,16 +248,16 @@ passive production stream (the nodes keep producing after a class change).
 
 ## Known limits
 
-- A garrison nobody spawns on is not counted (simulation: about 13 % of the garrisons, mostly destroyed before
-  being used). Among
-  the garrisons used, about 4 % are missed: a credit that matches two possible spawns is given to the one on
-  the builder's known spawn point, or the builder left.
+- A garrison nobody spawns on is not counted (simulation: about 15 % of the garrisons, mostly destroyed before
+  being used). Among the garrisons used, about 6.5 % are missed (simulation, no false garrison in 40 matches):
+  mostly garrisons only the builder's squad used (an outpost gives the same credits), then a credit that
+  matches two possible spawns is given to the one on the builder's known spawn point, or the builder left.
 - A garrison rebuilt in place of the builder's own previous one cannot be told from it (its spawns are those
   of the old spot).
 - A garrison built during a data gap is not counted (its position is unknown).
 - A garrison less than 100 m from another one of the same builder is counted once.
 - A commander ability used during a spawn wave on a fresh point right next to him that credits him exactly
-  could be confirmed (simulation: one false garrison in 40 matches).
+  could be confirmed.
 - A commander who spawns on an Airhead placed right where he scored +50 for another ability would confirm a
   false garrison (he places the Airhead from the map, usually far from where he stands).
 - A node and a repair station are identical when built; a node destroyed before its first tick stays
@@ -260,11 +271,12 @@ passive production stream (the nodes keep producing after a class change).
 
 - `tests/test_actions_detection.py`: scenarios poll by poll (`tests/actions_scenarios.py`), each checking false
   positives and false negatives, plus a seeded simulation of whole matches (`tests/actions_simulation.py`:
-  players walking across the map, synchronised spawn waves on the HQ, outposts and garrisons, garrisons
+  players walking across the map, synchronised spawn waves on one of the 3 HQs, outposts (moved by their
+  officer), airheads and garrisons, the commander dying and respawning at an HQ or on a garrison, garrisons
   destroyed at random, supplies consumed and credited to their owner (the builder, another squad leader, a
   support), nodes within the player / team limits, repair stations, commander abilities, polls every
   2.5–4.5 s, optional outage) that measures the error rates against the ground truth, separating the garrisons
-  someone spawned on. The simulation applies the same score table and rules: it tests the decision logic, not
+  someone spawned on, and the precision of the spawn point classification. The simulation applies the same score table and rules: it tests the decision logic, not
   the game values.
 - `tests/test_actions_spawn_points.py`: spawn point grouping and classification.
 - `tests/test_actions_tracking.py`: Redis persistence, restart, idempotence, banner, recording and replay, log
