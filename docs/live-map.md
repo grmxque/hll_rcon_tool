@@ -27,8 +27,8 @@ player, refreshed every 2 seconds.
 - The current layer's grid (letters / numbers) is drawn over the image.
 - Warfare / Offensive: each sector is coloured by the team holding it, derived from the score (option
   "Colour sectors by owner" to turn it off).
-- Garrisons detected by the [actions tracking](actions-tracking.md) are drawn as team-coloured diamonds marked
-  `G`, under the players (option "Show garrisons", which also gives the counts; the team filters apply):
+- Garrisons detected by the [actions tracking](actions-tracking.md) are drawn with the game's garrison icon on
+  a team-coloured disc, under the players (option "Show garrisons", which also gives the counts; the team filters apply):
   - **possible** (see-through, dashed outline): the builder's score shows a garrison, not confirmed yet (a
     commander ability or supplies consumed give the same points). Those of the commander are not drawn: his
     +50 are nearly always abilities;
@@ -39,9 +39,9 @@ player, refreshed every 2 seconds.
   (End of Game Rewards enabled with a construction category, the banner or the snapshot recording); otherwise
   no garrison is shown.
 - Spawn points seen from the spawns of the match ([actions tracking](actions-tracking.md#spawn-points)) are
-  drawn as team-coloured circles under the garrisons (option "Show spawn points", with the counts; the team
-  filters apply): `H` HQ, `O` outpost, `A` possible airhead (see-through, dashed outline), `G` a garrison only
-  seen from the spawns (not counted for its builder: built before the tracking started, or not confirmed by
+  drawn the same way under the garrisons (option "Show spawn points", with the counts; the team filters
+  apply): the game's outpost and airhead icons (a possible airhead is see-through with a dashed outline), `H`
+  for an HQ (no icon), the garrison icon for a garrison only seen from the spawns (not counted for its builder: built before the tracking started, or not confirmed by
   the rules of the rewards). A point appears 20 s after the spawns that reveal it; outposts and airheads
   disappear 5 minutes after their last spawn, HQs stay. Points with too few spawns to be classified are not
   drawn. The tooltip gives the player credited for the spawns, the number of spawns and the last one.
@@ -89,6 +89,10 @@ If hllrcon does not know the current layer, the page shows a message and no map.
 
 - Backend: `rcon/live_map.py` (pure builders + `live_map_for(rcon)`, tests in `tests/test_live_map.py`) and
   `RconAPI.get_live_map`.
+- Map icons: `assets/hll/images/icons/map/` (garrison, outpost, airhead; copied to `rcongui/public/` like the
+  other HLL images), taken from
+  [maps-let-loose](https://github.com/mattwright324/maps-let-loose) by mattwright324; they are game assets
+  © Team17. Drawn white (SVG filter) on the team colour.
 - Frontend: `rcongui/src/pages/views/map/` — `LiveMapCanvas.jsx` (SVG with pan/zoom, no map library), `PlayerLogs.jsx`, `ScoreBar.jsx`, `garrisons.js` and `spawnPoints.js` (filtering and tooltips),
   `MapSidebar.jsx`, `coordinates.js` (world → image → screen conversions), `deadPlayers.js` (last known
   positions) and `playerLabel.js` (marker labels), tested by `node --test src/pages/views/map/*.test.mjs`.
