@@ -18,6 +18,7 @@ import { ActionMenuButton } from "@/features/player-action/ActionMenu";
 import { generatePlayerActions } from "@/features/player-action/actions";
 import { TEAM_COLORS } from "./LiveMapCanvas";
 import { garrisonCounts } from "./garrisons";
+import { spawnPointCounts } from "./spawnPoints";
 
 const TEAM_LABELS = { allies: "Allies", axis: "Axis", unassigned: "Unassigned" };
 
@@ -108,8 +109,12 @@ export default function MapSidebar({
   garrisons,
   showGarrisons,
   onShowGarrisons,
+  spawnPoints,
+  showSpawnPoints,
+  onShowSpawnPoints,
 }) {
   const { confirmed, candidates } = garrisonCounts(garrisons);
+  const spawnCounts = spawnPointCounts(spawnPoints);
   const inSquadFilter = (player) => showUnassigned || !isUnassigned(player);
   const aliveCount = players.filter((player) => player.alive).length;
   const aliveOnMap = players.filter((player) => player.alive && inSquadFilter(player)).length;
@@ -220,6 +225,12 @@ export default function MapSidebar({
             <Checkbox size="small" checked={showGarrisons} onChange={(e) => onShowGarrisons(e.target.checked)} />
           }
           label={`Show garrisons (${confirmed} confirmed, ${candidates} possible)`}
+        />
+        <FormControlLabel
+          control={
+            <Checkbox size="small" checked={showSpawnPoints} onChange={(e) => onShowSpawnPoints(e.target.checked)} />
+          }
+          label={`Show spawn points (${spawnCounts.hq} HQ, ${spawnCounts.outpost} outposts, ${spawnCounts.airhead} airheads)`}
         />
       </Box>
 

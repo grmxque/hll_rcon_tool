@@ -38,6 +38,13 @@ player, refreshed every 2 seconds.
   The tooltip gives the builder, its age and the last spawn on it. Requires the actions tracking to run
   (End of Game Rewards enabled with a construction category, the banner or the snapshot recording); otherwise
   no garrison is shown.
+- Spawn points seen from the spawns of the match ([actions tracking](actions-tracking.md#spawn-points)) are
+  drawn as team-coloured circles under the garrisons (option "Show spawn points", with the counts; the team
+  filters apply): `H` HQ, `O` outpost, `A` possible airhead (see-through, dashed outline), `G` a garrison only
+  seen from the spawns (not counted for its builder: built before the tracking started, or not confirmed by
+  the rules of the rewards). A point appears 20 s after the spawns that reveal it; outposts and airheads
+  disappear 5 minutes after their last spawn, HQs stay. Points with too few spawns to be classified are not
+  drawn. The tooltip gives the player credited for the spawns, the number of spawns and the last one.
 
 ## Permission
 
@@ -56,8 +63,9 @@ so only give it to trusted admins.
   the map's large (Warfare) grid on each axis. Skirmish layers keep that image and draw their own smaller grid.
 - Score and remaining time: `Rcon.get_gamestate()` (cached ~2 s). If it fails the map is still returned,
   without the banner.
-- Garrisons: the actions tracking state of the match in Redis (`rcon.actions_tracking.tracker.live_garrisons`),
-  updated by the log loop every 3 to 4 s. If it cannot be read the map is returned without garrisons.
+- Garrisons and spawn points: the actions tracking state of the match in Redis
+  (`rcon.actions_tracking.tracker.live_tracking`), updated by the log loop every 3 to 4 s. If it cannot be
+  read the map is returned without them.
 - Sector owners: the score is the number of sectors each team holds, counted from its spawn side
   (`Map.allies_direction`). Only for layers with 5 sectors of 3 capture zones (Warfare, Offensive).
 - World axes: `x` towards the east, `y` towards the south (game centimetres), mapped directly onto image pixels.
@@ -76,14 +84,14 @@ If hllrcon does not know the current layer, the page shows a message and no map.
 
 - Backend: `rcon/live_map.py` (pure builders + `live_map_for(rcon)`, tests in `tests/test_live_map.py`) and
   `RconAPI.get_live_map`.
-- Frontend: `rcongui/src/pages/views/map/` — `LiveMapCanvas.jsx` (SVG with pan/zoom, no map library), `PlayerLogs.jsx`, `ScoreBar.jsx`, `garrisons.js` (filtering and tooltips),
+- Frontend: `rcongui/src/pages/views/map/` — `LiveMapCanvas.jsx` (SVG with pan/zoom, no map library), `PlayerLogs.jsx`, `ScoreBar.jsx`, `garrisons.js` and `spawnPoints.js` (filtering and tooltips),
   `MapSidebar.jsx`, `coordinates.js` (world → image → screen conversions), `deadPlayers.js` (last known
   positions) and `playerLabel.js` (marker labels), tested by `node --test src/pages/views/map/*.test.mjs`.
 
 ## Previewing without a game server
 
 With the local stack (`docs/local-dev.md`) and `npm run dev`, open `/views/map?demo`: the page uses fake
-players moving around Carentan, a score that changes every 20 s, a few garrisons (confirmed and possible) and fake kill logs (`rcongui/src/pages/views/map/demo.js`). This mode only
+players moving around Carentan, a score that changes every 20 s, a few garrisons (confirmed and possible), spawn points and fake kill logs (`rcongui/src/pages/views/map/demo.js`). This mode only
 exists in the Vite dev server; production builds do not contain it.
 
 ## Known limits
@@ -97,6 +105,7 @@ exists in the Vite dev server; production builds do not contain it.
 - Garrisons are those detected from the scores (see above), with the actions tracking delay and limits: a
   garrison nobody spawns on stays "possible" for 20 minutes (it can still be confirmed later), a destroyed one
   stays drawn until
-  20 minutes without spawn. Outposts and other spawn points are not shown: the game server exposes them
-  neither through RCON commands nor in the logs.
+  20 minutes without spawn. The game server exposes no spawn point (neither RCON commands nor logs): HQs,
+  outposts and airheads are inferred from where players spawn and who gets the credits, so an outpost nobody
+  used yet is not shown, and the spotters' outposts are not told apart (their credits are not analysed).
 - Vehicles are not shown separately: crew members appear at the vehicle's position.

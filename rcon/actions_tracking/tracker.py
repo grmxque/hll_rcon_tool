@@ -205,20 +205,28 @@ def final_actions(
     return engine.summary()
 
 
-def live_garrisons(map_start: int | None) -> list[dict]:
-    """Garrison candidates and confirmed garrisons of the running match (live map)."""
+def live_tracking(map_start: int | None) -> dict[str, list[dict]]:
+    """What the live map draws of the running match: ``garrisons`` (candidates and confirmed ones)
+    and ``spawn_points`` (HQs, outposts, airheads, garrisons seen from the spawns only)."""
+    empty = {"garrisons": [], "spawn_points": []}
     if not map_start:
-        return []
+        return empty
     config = load_config()
     if not config.actions_tracking_enabled:
-        return []
+        return empty
     state = _load_state(get_redis_client(), map_start)
     if state is None:
-        return []
+        return empty
     engine = make_engine(config, state)
-    return engine.detectors["garrison"].live(
+    garrisons = engine.detectors["garrison"].live(
         engine.spawns, engine.names, engine.last_ts
     )
+    return {
+        "garrisons": garrisons,
+        "spawn_points": engine.points.live(
+            engine.names, engine.last_ts, hidden=garrisons
+        ),
+    }
 
 
 def stored_decisions(map_start: int) -> list[dict]:

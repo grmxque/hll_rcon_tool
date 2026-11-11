@@ -161,6 +161,29 @@ function demoGarrisons() {
   ];
 }
 
+// Spawn points seen from the spawns: HQs, outposts, a possible airhead.
+function demoSpawnPoints() {
+  const now = Date.now() / 1000;
+  const spawnPoint = (spot, team, kind, owner, spawns) => ({
+    x: SPAWN_POINTS.find((point) => point.name === spot).x,
+    y: SPAWN_POINTS.find((point) => point.name === spot).y - 2500,
+    team,
+    kind,
+    owner_id: owner,
+    owner_name: owner,
+    first_seen: now - 20 * 60,
+    last_seen: now - 25,
+    spawns,
+  });
+  return [
+    spawnPoint("Blactot", "allies", "hq", null, 42),
+    spawnPoint("La Maison Des Ormes", "axis", "hq", null, 38),
+    spawnPoint("Farm Ruins", "allies", "outpost", "grmxque", 6),
+    spawnPoint("Canal Locks", "axis", "outpost", "Hans", 4),
+    spawnPoint("Town Center", "allies", "airhead", null, 5),
+  ];
+}
+
 export function demoLiveMap() {
   step();
   const score = demoScore();
@@ -174,6 +197,7 @@ export function demoLiveMap() {
     score,
     players,
     garrisons: demoGarrisons(),
+    spawn_points: demoSpawnPoints(),
     match_start_ms: startedAt,
   });
 }

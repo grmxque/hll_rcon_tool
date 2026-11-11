@@ -6,6 +6,7 @@ import LiveMapCanvas from "./LiveMapCanvas";
 import MapSidebar, { isUnassigned } from "./MapSidebar";
 import { updateDeployment, updateLastPositions, withDeadPositions, withDeployment } from "./deadPlayers";
 import { visibleGarrisons } from "./garrisons";
+import { visibleSpawnPoints } from "./spawnPoints";
 import PlayerLogs from "./PlayerLogs";
 import ScoreBar from "./ScoreBar";
 
@@ -72,6 +73,12 @@ const LiveMapPage = () => {
   const mapGarrisons = useMemo(
     () => visibleGarrisons(garrisons, { show: showGarrisons, visibleTeams }),
     [garrisons, showGarrisons, visibleTeams],
+  );
+  const [showSpawnPoints, setShowSpawnPoints] = useState(true);
+  const spawnPoints = data?.spawn_points ?? [];
+  const mapSpawnPoints = useMemo(
+    () => visibleSpawnPoints(spawnPoints, { show: showSpawnPoints, visibleTeams }),
+    [spawnPoints, showSpawnPoints, visibleTeams],
   );
 
   // Last alive position of each player, so the dead stay on the map until they redeploy.
@@ -150,6 +157,7 @@ const LiveMapPage = () => {
               layer={data?.layer ?? null}
               players={mapPlayers}
               garrisons={mapGarrisons}
+              spawnPoints={mapSpawnPoints}
               selectedId={selectedId}
               highlightSquad={highlightSquad}
               showNames={showNames}
@@ -201,6 +209,9 @@ const LiveMapPage = () => {
               garrisons={garrisons}
               showGarrisons={showGarrisons}
               onShowGarrisons={setShowGarrisons}
+              spawnPoints={spawnPoints}
+              showSpawnPoints={showSpawnPoints}
+              onShowSpawnPoints={setShowSpawnPoints}
             />
           )}
         </Box>
