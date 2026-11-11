@@ -3,6 +3,8 @@ import { Box, IconButton, Paper, Stack, Tooltip, Typography } from "@mui/materia
 import AddIcon from "@mui/icons-material/Add";
 import RemoveIcon from "@mui/icons-material/Remove";
 import CenterFocusStrongIcon from "@mui/icons-material/CenterFocusStrong";
+import FullscreenIcon from "@mui/icons-material/Fullscreen";
+import FullscreenExitIcon from "@mui/icons-material/FullscreenExit";
 import {
   MAP_SIZE,
   centerOn,
@@ -10,6 +12,7 @@ import {
   gridGeometry,
   isTeleport,
   relativeZoom,
+  resizeView,
   worldLengthToMap,
   worldToMap,
   zoomAt,
@@ -265,6 +268,7 @@ const Sectors = ({ sectors, extent, scale }) => (
 /**
  * Pannable / zoomable tactical map. The parent controls which players are shown
  * and which one is selected; `focusPlayer(id)` (via ref) centres the view on a player.
+ * With `onToggleFullscreen`, a control button switches the parent's full-screen mode.
  */
 const LiveMapCanvas = forwardRef(function LiveMapCanvas(
   {
@@ -278,11 +282,14 @@ const LiveMapCanvas = forwardRef(function LiveMapCanvas(
     showSquadNames,
     showSectorColors,
     onSelect,
+    fullscreen = false,
+    onToggleFullscreen,
   },
   ref,
 ) {
   const containerRef = useRef(null);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
+  const viewportRef = useRef(viewport);
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
   const dragRef = useRef(null);
   const pinchRef = useRef(null);
@@ -294,7 +301,12 @@ const LiveMapCanvas = forwardRef(function LiveMapCanvas(
     if (!element) return undefined;
     const observer = new ResizeObserver(([entry]) => {
       const { width, height } = entry.contentRect;
-      setViewport({ width, height });
+      const next = { width, height };
+      const previous = viewportRef.current;
+      viewportRef.current = next;
+      setViewport(next);
+      // Rotating the phone or entering full screen keeps what was on screen.
+      setView((current) => resizeView(current, previous, next));
     });
     observer.observe(element);
     return () => observer.disconnect();
@@ -503,6 +515,13 @@ const LiveMapCanvas = forwardRef(function LiveMapCanvas(
               <CenterFocusStrongIcon fontSize="small" />
             </IconButton>
           </Tooltip>
+          {onToggleFullscreen && (
+            <Tooltip title={fullscreen ? "Exit full screen" : "Full screen"} placement="left">
+              <IconButton size="small" onClick={onToggleFullscreen}>
+                {fullscreen ? <FullscreenExitIcon fontSize="small" /> : <FullscreenIcon fontSize="small" />}
+              </IconButton>
+            </Tooltip>
+          )}
         </Stack>
       </Paper>
     </Box>

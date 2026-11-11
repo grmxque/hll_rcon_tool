@@ -9,10 +9,33 @@ import { visibleGarrisons } from "./garrisons";
 import { visibleSpawnPoints } from "./spawnPoints";
 import PlayerLogs from "./PlayerLogs";
 import ScoreBar from "./ScoreBar";
+import { useFullscreen } from "./useFullscreen";
 
 // Same as the backend team view cache TTL: polling faster would only return cached data.
 const REFRESH_INTERVAL_MS = 2000;
 const LOGS_PANEL_HEIGHT = 240;
+
+// Phones: the map is a square as wide as the page (the tactical map is square), with the sidebar below.
+// Desktop: it fills the space left by the sidebar. The height must be explicit, the canvas fills it.
+const MAP_AREA_SX = {
+  display: "flex",
+  flexDirection: "column",
+  width: "100%",
+  flexGrow: { md: 1 },
+  minHeight: { md: 0 },
+  aspectRatio: { xs: "1 / 1", md: "auto" },
+  maxHeight: { xs: "75vh", md: "none" },
+};
+
+// Full screen: the map and the score cover the whole viewport, above the app bar and the sidebar.
+const FULLSCREEN_MAP_AREA_SX = {
+  display: "flex",
+  flexDirection: "column",
+  position: "fixed",
+  inset: 0,
+  zIndex: "modal",
+  bgcolor: "background.default",
+};
 
 // `npm run dev` + `/views/map?demo` shows fake data, to preview the page without a game server.
 const hasDemoParam = () => new URLSearchParams(window.location.search).has("demo");
@@ -60,6 +83,7 @@ function errorMessage(error) {
 const LiveMapPage = () => {
   const { data, error, isLoading } = useQuery(liveMapQueryOptions);
   const canvasRef = useRef(null);
+  const { active: fullscreen, toggle: toggleFullscreen } = useFullscreen();
   const [selectedId, setSelectedId] = useState(null);
   const [highlightSquad, setHighlightSquad] = useState(null);
   const [visibleTeams, setVisibleTeams] = useState({ allies: true, axis: true });
@@ -125,6 +149,8 @@ const LiveMapPage = () => {
     [visibleTeams, showUnassigned, showDead],
   );
 
+  const scoreBar = <ScoreBar score={data?.score} layer={data?.layer} />;
+
   return (
     <Stack spacing={1} sx={{ mt: 1 }}>
       <Box sx={{ height: 4 }}>{isLoading && <LinearProgress />}</Box>
@@ -134,7 +160,7 @@ const LiveMapPage = () => {
           {errorMessage(error)}
         </Alert>
       )}
-      <ScoreBar score={data?.score} layer={data?.layer} />
+      {!fullscreen && scoreBar}
       {data && !data.layer && (
         <Alert severity="info">
           The current map is unknown to CRCON: players cannot be placed on a tactical map.
@@ -146,25 +172,31 @@ const LiveMapPage = () => {
           display: "flex",
           flexDirection: { xs: "column", md: "row" },
           height: { xs: "auto", md: "calc(100vh - 230px)" },
-          minHeight: 560,
+          minHeight: { md: 560 },
           overflow: "hidden",
         }}
       >
         <Stack sx={{ flexGrow: 1, minWidth: 0, height: { xs: "auto", md: "100%" } }}>
-          <Box sx={{ flexGrow: 1, minHeight: { xs: "60vh", md: 0 } }}>
-            <LiveMapCanvas
-              ref={canvasRef}
-              layer={data?.layer ?? null}
-              players={mapPlayers}
-              garrisons={mapGarrisons}
-              spawnPoints={mapSpawnPoints}
-              selectedId={selectedId}
-              highlightSquad={highlightSquad}
-              showNames={showNames}
-              showSquadNames={showSquadNames}
-              showSectorColors={showSectorColors}
-              onSelect={setSelectedId}
-            />
+          {/* The canvas keeps its place in the tree in full screen, so it is not remounted. */}
+          <Box sx={fullscreen ? FULLSCREEN_MAP_AREA_SX : MAP_AREA_SX}>
+            {fullscreen && scoreBar}
+            <Box sx={{ flexGrow: 1, minHeight: 0 }}>
+              <LiveMapCanvas
+                ref={canvasRef}
+                layer={data?.layer ?? null}
+                players={mapPlayers}
+                garrisons={mapGarrisons}
+                spawnPoints={mapSpawnPoints}
+                selectedId={selectedId}
+                highlightSquad={highlightSquad}
+                showNames={showNames}
+                showSquadNames={showSquadNames}
+                showSectorColors={showSectorColors}
+                onSelect={setSelectedId}
+                fullscreen={fullscreen}
+                onToggleFullscreen={toggleFullscreen}
+              />
+            </Box>
           </Box>
           {selectedPlayer && (
             <Box sx={{ height: LOGS_PANEL_HEIGHT, flexShrink: 0, borderTop: 1, borderColor: "divider" }}>
