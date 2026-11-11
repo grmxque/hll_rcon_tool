@@ -30,7 +30,8 @@ player, refreshed every 2 seconds.
 - Garrisons detected by the [actions tracking](actions-tracking.md) are drawn as team-coloured diamonds marked
   `G`, under the players (option "Show garrisons", which also gives the counts; the team filters apply):
   - **possible** (see-through, dashed outline): the builder's score shows a garrison, not confirmed yet (a
-    commander ability or supplies consumed give the same points);
+    commander ability or supplies consumed give the same points). Those of the commander are not drawn: his
+    +50 are nearly always abilities;
   - **confirmed** (opaque): teammates spawned on it. It disappears after 20 minutes without a spawn on it
     (destruction is not observable).
 

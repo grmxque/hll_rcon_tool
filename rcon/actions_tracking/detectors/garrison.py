@@ -51,6 +51,9 @@ CONFIRMATION_MARGIN = 1_500
 UNCREDITED_SPAWNS_HQ = 3
 # Two candidates of one builder this close share their spawns: only one can be confirmed.
 SAME_GARRISON_DISTANCE = 10_000
+# Their candidates are not drawn on the live map: the commander's +50 are nearly always abilities
+# (supply drop, airhead…). His confirmed garrisons are.
+MAP_HIDDEN_CANDIDATE_ROLES = frozenset({"armycommander"})
 # Decisions with a smaller gain and no candidate are not reported (noise).
 REPORTED_GAIN = 40
 OUTPOST_ROLES = frozenset({"officer", "spotter"})
@@ -159,10 +162,13 @@ class GarrisonDetector(ActionDetector):
         """Garrisons to draw on the live map: candidates, and confirmed ones still in use.
 
         Destruction is not observable: a confirmed garrison is shown while it remains a known spawn
-        point of its builder, i.e. until nobody spawned on it for ``SPAWN_POINT_TTL``.
+        point of its builder, i.e. until nobody spawned on it for ``SPAWN_POINT_TTL``. Candidates of
+        the commander are left out (``MAP_HIDDEN_CANDIDATE_ROLES``).
         """
         result = []
         for candidate in self.candidates:
+            if candidate.get("role") in MAP_HIDDEN_CANDIDATE_ROLES:
+                continue
             result.append(
                 self._live(candidate, candidate["player_id"], "candidate", None, names)
             )
@@ -368,6 +374,7 @@ class GarrisonDetector(ActionDetector):
                 "deadline": ts + CONFIRMATION_SECONDS,
                 "gain": gain.points,
                 "construction": analysis["construction"],
+                "role": prev["role"],
             }
         )
         reason = (
