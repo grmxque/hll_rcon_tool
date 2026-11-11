@@ -273,9 +273,7 @@ def live_tracking(map_start: int | None) -> dict[str, list[dict]]:
             )
         ],
         "spawn_points": [
-            p
-            for p in spawn_points
-            if p["kind"] == "hq" or not _stale_on_front(engine, p, p["last_seen"])
+            p for p in spawn_points if not _stale_on_front(engine, p, p["last_seen"])
         ],
     }
 

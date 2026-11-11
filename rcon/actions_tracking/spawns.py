@@ -25,7 +25,7 @@ from rcon.actions_tracking.context import (
     distance,
 )
 from rcon.actions_tracking.model import PlayerSample
-from rcon.actions_tracking.sectors import inside
+from rcon.actions_tracking.sectors import in_home_area, inside
 
 
 class SpawnLedger:
@@ -233,13 +233,19 @@ UNCREDITED_SPAWNS = 3
 # an HQ: an airhead is placed during the match and only lasts a few minutes.
 HQ_EARLY_SECONDS = 180.0
 HQ_LIFETIME_SECONDS = 600.0
+# Two garrisons of a team are never this close (game rule): a garrison only seen from the spawns
+# next to a confirmed garrison or a more used one is not drawn.
+GARRISON_SPACING = 20_000
+# An uncredited point of several squads away from the HQs used for longer is a garrison, not an
+# airhead (assumption: an airhead only lasts a few minutes).
+AIRHEAD_SECONDS = 180.0
 # Share of the spawns crediting the same player for the point to be his (garrison, outpost), and
 # share of one squad for an owned point to be an outpost (squad only).
 OWNED_SHARE = 0.5
-# Outposts and airheads nobody spawned on for this long are no longer drawn on the live map (moved,
-# destroyed, expired). HQs stay.
+# Spawn points nobody spawned on for this long are no longer drawn on the live map (moved, destroyed,
+# expired). HQs are never drawn: they are of no use there.
 LIVE_STALE_SECONDS = 300.0
-LIVE_KINDS = (HQ, GARRISON, OUTPOST, AIRHEAD)
+LIVE_KINDS = (GARRISON, OUTPOST, AIRHEAD)
 OUTPOST_SQUAD_SHARE = 0.8
 
 
@@ -248,15 +254,36 @@ def unit_key(unit_id: int | None) -> str:
     return NO_SQUAD if unit_id is None else str(unit_id)
 
 
-def classify(point: dict, match_start: float | None) -> tuple[str, str]:
+def classify(
+    point: dict, match_start: float | None, sectors: list[dict] | None = None
+) -> tuple[str, str]:
     """Kind of a spawn point and the reason, from the spawns settled on it.
 
     A credit is not certain proof of ownership: when several spawns can explain a gain, the
     detectors may give one at the HQ to an officer whose outpost was used elsewhere. So a point is
-    owned only if most of its spawns credited the same player.
+    owned only if most of its spawns credited the same player. With the sectors known, a point
+    away from the team's home sector cannot be an HQ (``classify_away``).
     """
     if point.get("garrison"):
         return GARRISON, "a confirmed garrison"
+    home = in_home_area(
+        sectors or [], point.get("team"), point.get("x", 0), point.get("y", 0)
+    )
+    if home is False:
+        return classify_away(point)
+    squads = {unit for unit in point["squads"] if unit not in (NO_SQUAD, "-1")}
+    if (
+        home
+        and len(squads) >= 2
+        and match_start is not None
+        and point["first_ts"] - match_start <= HQ_EARLY_SECONDS
+    ):
+        # The HQ spawns spread over several points, some wrongly credited to an officer whose
+        # outpost was used at the same time: at the start of a team, from the start, an HQ.
+        return (
+            HQ,
+            "at the start of the team, used by several squads since the start of the match",
+        )
     spawns = point["spawns"]
     owner_credits = max(point["credited"].values(), default=0)
     main_squad = max(point["squads"].values(), default=0)
@@ -280,11 +307,32 @@ def classify(point: dict, match_start: float | None) -> tuple[str, str]:
         return HQ, "credits nobody, used since the start of the match"
     if point["last_ts"] - point["first_ts"] >= HQ_LIFETIME_SECONDS:
         return HQ, "credits nobody, used for a long time"
-    if point["commander"]:
-        return HQ, "credits nobody, the commander spawned there"
     if len(squads) >= 2:
         return AIRHEAD, "credits nobody, placed during the match, several squads"
     return UNKNOWN, "credits nobody, one squad only"
+
+
+def classify_away(point: dict) -> tuple[str, str]:
+    """A point away from the team's start (HQs are only there): an outpost or a garrison, or an
+    airhead.
+
+    Outpost spawns are not always seen crediting its officer, so one squad alone makes an outpost,
+    from its first spawn. The commander and players without a squad never use an outpost.
+    """
+    spawns = point["spawns"]
+    squads = {unit for unit in point["squads"] if unit not in (NO_SQUAD, "-1")}
+    no_outpost = point["commander"] + point["no_squad"]
+    if no_outpost == 0 and len(squads) <= 1:
+        return OUTPOST, "away from the HQs, used by one squad"
+    owner_credits = max(point["credited"].values(), default=0)
+    if (
+        owner_credits < OWNED_SHARE * spawns
+        and len(squads) >= 2
+        and not point["commander"]
+        and point["last_ts"] - point["first_ts"] <= AIRHEAD_SECONDS
+    ):
+        return AIRHEAD, "away from the HQs, credits nobody, several squads, recent"
+    return GARRISON, "away from the HQs, used by several squads"
 
 
 class SpawnPoints:
@@ -307,7 +355,13 @@ class SpawnPoints:
             "match_start": self.match_start,
         }
 
-    def update(self, ledger: SpawnLedger, ts: float, match_start: float | None) -> None:
+    def update(
+        self,
+        ledger: SpawnLedger,
+        ts: float,
+        match_start: float | None,
+        sectors: list[dict] | None = None,
+    ) -> None:
         """Add the spawns settled since the last update, classify, forget unused points."""
         self.match_start = match_start
         for spawn in ledger.spawns:
@@ -315,7 +369,27 @@ class SpawnPoints:
                 spawn["point"] = self._add(spawn)["id"]
         self.points = [p for p in self.points if ts - p["last_ts"] <= SPAWN_POINT_TTL]
         for point in self.points:
-            point["kind"], point["reason"] = classify(point, match_start)
+            point["kind"], point["reason"] = classify(point, match_start, sectors)
+        self._space_garrisons()
+
+    def _space_garrisons(self) -> None:
+        """Garrisons seen from the spawns too close to a confirmed garrison or to a more used one
+        of the same team become unknown: two garrisons are never that close."""
+        garrisons = sorted(
+            (p for p in self.points if p["kind"] == GARRISON and not p.get("garrison")),
+            key=lambda p: -p["spawns"],
+        )
+        kept = [{"team": g["team"], "x": g["x"], "y": g["y"]} for g in self.garrisons]
+        for point in garrisons:
+            if any(
+                k["team"] == point["team"]
+                and distance(k["x"], k["y"], point["x"], point["y"]) < GARRISON_SPACING
+                for k in kept
+            ):
+                point["kind"] = UNKNOWN
+                point["reason"] = "garrison-like, but too close to another garrison"
+            else:
+                kept.append(point)
 
     def garrison_confirmed(self, owner: str, x: float, y: float, team: str) -> None:
         """A garrison counted by the garrison detector: its points are garrisons."""
@@ -334,14 +408,13 @@ class SpawnPoints:
         return min(found, key=lambda f: f[0])[1] if found else None
 
     def sector_captured(self, team: str, sector: dict, ledger: SpawnLedger) -> None:
-        """``team`` lost ``sector``: its spawn points there are destroyed (not its HQ). Its spawns
-        there not settled yet must not bring them back."""
+        """``team`` lost ``sector``: its spawn points there are destroyed. A point classified as an
+        HQ there was a mistake (HQs are at the start of the team, never captured), so it goes too.
+        Its spawns there not settled yet must not bring them back."""
         self.points = [
             p
             for p in self.points
-            if p["team"] != team
-            or p["kind"] == HQ
-            or not inside(sector, p["x"], p["y"])
+            if p["team"] != team or not inside(sector, p["x"], p["y"])
         ]
         for spawn in ledger.spawns:
             if (
@@ -359,19 +432,15 @@ class SpawnPoints:
     ) -> list[dict]:
         """Points to draw on the live map.
 
-        Left out: unknown points (few spawns), confirmed garrisons and points near ``hidden``
-        positions (the garrison markers), outposts and airheads unused for ``LIVE_STALE_SECONDS``.
+        Left out: HQs, unknown points (few spawns), confirmed garrisons and points near ``hidden``
+        positions (the garrison markers), points unused for ``LIVE_STALE_SECONDS``.
         """
         hidden = list(hidden)
         result = []
         for point in self.points:
             if point["kind"] not in LIVE_KINDS or point.get("garrison"):
                 continue
-            if (
-                point["kind"] != HQ
-                and now is not None
-                and now - point["last_ts"] > LIVE_STALE_SECONDS
-            ):
+            if now is not None and now - point["last_ts"] > LIVE_STALE_SECONDS:
                 continue
             if any(
                 h["team"] == point["team"] and self._near(point, h["x"], h["y"])
@@ -394,6 +463,8 @@ class SpawnPoints:
                     "first_seen": point["first_ts"],
                     "last_seen": point["last_ts"],
                     "spawns": point["spawns"],
+                    # Seen from a single spawn, or an airhead: drawn see-through.
+                    "possible": point["spawns"] < 2 or point["kind"] == AIRHEAD,
                 }
             )
         return result

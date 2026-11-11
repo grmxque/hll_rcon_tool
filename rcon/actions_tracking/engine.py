@@ -143,7 +143,7 @@ class ActionsEngine:
             self._remember(sample, raw[player_id], ts, global_gap)
         if self.first_ts is None:
             self.first_ts = ts
-        self.points.update(self.spawns, ts, self.first_ts)
+        self.points.update(self.spawns, ts, self.first_ts, self.sectors)
         self.spawns.prune(ts)
         self.last_ts = ts
         return decisions

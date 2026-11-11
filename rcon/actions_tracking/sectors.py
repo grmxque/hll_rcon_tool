@@ -58,6 +58,30 @@ def track_owners(
     return state, captures
 
 
+def in_home_area(
+    sectors: list[dict], team: str | None, x: float, y: float
+) -> bool | None:
+    """Whether (x, y) can be an HQ of ``team``: in its home sector (the end of the row it starts
+    from) or outside the sectors. ``None`` when the sectors or the side of the team are unknown.
+
+    The HQs are at the start of each team, never in the middle of the map.
+    """
+    if not sectors:
+        return None
+
+    def owner(sector: dict) -> str | None:
+        return sector.get("last_owner", sector.get("owner"))
+
+    if owner(sectors[0]) == team:
+        home = 0
+    elif owner(sectors[-1]) == team:
+        home = len(sectors) - 1
+    else:
+        return None
+    index = sector_at(sectors, x, y)
+    return index is None or index == home
+
+
 def front_zone(sectors: list[dict], team: str | None, x: float, y: float) -> str | None:
     """Where (x, y) is for ``team``: ``front`` (a sector it does not hold, or one of its sectors next
     to one it does not hold), ``rear`` (behind its front sector), ``None`` (outside the sectors or

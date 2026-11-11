@@ -27,9 +27,9 @@ player, refreshed every 2 seconds.
 - The current layer's grid (letters / numbers) is drawn over the image.
 - Warfare / Offensive: each sector is coloured by the team holding it, derived from the score (option
   "Colour sectors by owner" to turn it off).
-- Garrisons detected by the [actions tracking](actions-tracking.md) are drawn with the game's garrison icon on
-  a team-coloured disc, under the players (option "Show garrisons", which also gives the counts; the team filters apply):
-  - **possible** (see-through, dashed outline): the builder's score shows a garrison, not confirmed yet (a
+- Garrisons detected by the [actions tracking](actions-tracking.md) are drawn as a garrison icon (flag) in the
+  team colour, under the players (option "Show garrisons", which also gives the counts; the team filters apply):
+  - **possible** (see-through): the builder's score shows a garrison, not confirmed yet (a
     commander ability or supplies consumed give the same points). Those of the commander are not drawn: his
     +50 are nearly always abilities;
   - **confirmed** (opaque): teammates spawned on it. It disappears after 20 minutes without a spawn on it
@@ -40,16 +40,17 @@ player, refreshed every 2 seconds.
   no garrison is shown.
 - Spawn points seen from the spawns of the match ([actions tracking](actions-tracking.md#spawn-points)) are
   drawn the same way under the garrisons (option "Show spawn points", with the counts; the team filters
-  apply): the game's outpost and airhead icons (a possible airhead is see-through with a dashed outline), `H`
-  for an HQ (no icon), the garrison icon for a garrison only seen from the spawns (not counted for its builder: built before the tracking started, or not confirmed by
-  the rules of the rewards). A point appears 20 s after the spawns that reveal it; outposts and airheads
-  disappear 5 minutes after their last spawn, HQs stay. Points with too few spawns to be classified are not
-  drawn. The tooltip gives the player credited for the spawns, the number of spawns and the last one.
+  apply): an outpost icon, an airhead icon (parachute, see-through: possible), the garrison icon for a garrison
+  only seen from the spawns (not counted for its builder: built before the tracking started, or not confirmed
+  by the rules of the rewards). A point seen from a single spawn is see-through. HQs are not drawn. A point
+  appears 20 s after the spawns that reveal it and disappears 5 minutes after its last spawn. Points with too
+  few spawns to be classified are not drawn. The tooltip gives the player credited for the spawns, the number
+  of spawns and the last one. The icons are SVG drawings after the game's silhouettes (`mapIcons.jsx`).
 - Front line (Warfare / Offensive, sector owners from the score): garrisons and outposts of a team disappear
   as soon as the other team captures their sector (the game destroys them). On the front line, a sector the
   team does not hold or one of its sectors next to it, a garrison or spawn point nobody spawned on for
   5 minutes is no longer drawn (probably destroyed); behind the front the 20 minutes apply. A candidate counts
-  from its detection. HQs always stay.
+  from its detection.
 
 ## Permission
 
@@ -89,11 +90,7 @@ If hllrcon does not know the current layer, the page shows a message and no map.
 
 - Backend: `rcon/live_map.py` (pure builders + `live_map_for(rcon)`, tests in `tests/test_live_map.py`) and
   `RconAPI.get_live_map`.
-- Map icons: `assets/hll/images/icons/map/` (garrison, outpost, airhead; copied to `rcongui/public/` like the
-  other HLL images), taken from
-  [maps-let-loose](https://github.com/mattwright324/maps-let-loose) by mattwright324; they are game assets
-  © Team17. Drawn white (SVG filter) on the team colour.
-- Frontend: `rcongui/src/pages/views/map/` — `LiveMapCanvas.jsx` (SVG with pan/zoom, no map library), `PlayerLogs.jsx`, `ScoreBar.jsx`, `garrisons.js` and `spawnPoints.js` (filtering and tooltips),
+- Frontend: `rcongui/src/pages/views/map/` — `LiveMapCanvas.jsx` (SVG with pan/zoom, no map library), `PlayerLogs.jsx`, `ScoreBar.jsx`, `garrisons.js` and `spawnPoints.js` (filtering and tooltips), `mapIcons.jsx` (SVG icons),
   `MapSidebar.jsx`, `coordinates.js` (world → image → screen conversions), `deadPlayers.js` (last known
   positions) and `playerLabel.js` (marker labels), tested by `node --test src/pages/views/map/*.test.mjs`.
 
@@ -115,7 +112,7 @@ exists in the Vite dev server; production builds do not contain it.
   garrison nobody spawns on stays "possible" for 20 minutes (it can still be confirmed later). Besides a
   capture of its sector, a destroyed garrison stays drawn until nobody spawned on it for 20 minutes (5 on the
   front line). Sector owners come from the score, so a sector being captured counts only once the score
-  changes. The game server exposes no spawn point (neither RCON commands nor logs): HQs, outposts and
-  airheads are inferred from where players spawn and who gets the credits, so an outpost nobody used yet is
-  not shown, and the spotters' outposts are not told apart (their credits are not analysed).
+  changes. The game server exposes no spawn point (neither RCON commands nor logs): outposts, airheads and
+  garrisons seen from the spawns are inferred from where players spawn, which squads and who gets the
+  credits, so an outpost nobody used yet is not shown. Two outposts less than 50 m apart make one point.
 - Vehicles are not shown separately: crew members appear at the vehicle's position.
