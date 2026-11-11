@@ -75,7 +75,78 @@ def test_garrison_nobody_spawns_on_is_not_counted(match):
     build(match, "off", GARRISON)
     match.idle(310)
     assert match.garrisons("off") == 0
+    assert "kept until the end of the match" in match.decisions[-1].reason  # dormant
+    match.finalize()
     assert ("garrison", "rejected") in verdicts(match.decisions, "off")
+
+
+def test_dormant_garrison_used_much_later_is_confirmed(match):
+    build(match, "off", GARRISON)
+    match.idle(600)  # a reserve garrison, nobody spawns on it for 10 minutes
+    confirm(match, "off", GARRISON)
+    assert match.garrisons("off") == 1
+    assert "after it went dormant" in match.decisions[-1].reason
+
+
+def test_dormant_garrison_confirmed_by_several_squads_with_mixed_credits(match):
+    build(match, "off", GARRISON)
+    match.idle(310)
+    # Two squads spawn on it (his own and b's); his gain mixes their credits with an unknown +1,
+    # so it does not match exactly: only the several squads confirm it.
+    wave(match, GARRISON, squad=("a0",), team=("b0",), credited="off", extra=1)
+    assert match.garrisons("off") == 1
+
+
+def test_one_squad_on_a_dormant_candidate_is_an_outpost(match):
+    build(match, "off", GARRISON)
+    match.idle(310)
+    # b0 and b1 are in the same squad: an outpost of that squad, not a garrison.
+    wave(match, GARRISON, team=("b0", "b1"), credited="off", extra=1)
+    assert match.garrisons("off") == 0
+
+
+def test_dormant_candidate_at_the_hq_is_not_confirmed(match):
+    squad_b = [f"b{i}" for i in range(6)]
+    wave(match, HQ, team=squad_b)  # HQ spawns credit nobody
+    build(match, "off", HQ)  # supplies of his consumed by someone else
+    match.idle(310)
+    match.add("c0", unit_id=6)
+    match.poll()
+    wave(match, HQ, team=("b0", "c0"), credited="off", extra=10)
+    match.idle(310)
+    assert match.garrisons("off") == 0
+
+
+def test_dormant_candidate_does_not_take_a_teammates_new_garrison(match):
+    build(
+        match, "off", GARRISON
+    )  # supplies of off consumed by someone else, off stays there
+    match.move("off", (1500.0, 300.0))
+    match.idle(310)
+    build(
+        match, "off2", (GARRISON[0] + 10, GARRISON[1])
+    )  # off2's real garrison, 10 m away
+    confirm(match, "off2", (GARRISON[0] + 10, GARRISON[1]), team=("a0",))
+    match.die("a1", "a2")
+    match.idle(15)
+    match.spawn(["a1", "a2"], at=(GARRISON[0] + 10, GARRISON[1]))
+    match.gain("off2", 6)
+    match.gain("off", 10)  # his outpost elsewhere, at the same time
+    match.poll()
+    match.finalize()
+    assert match.garrisons("off2") == 1
+    assert match.garrisons("off") == 0
+
+
+def test_a_mismatched_wave_does_not_block_the_garrison(match):
+    build(match, "off", GARRISON)
+    for _ in range(2):
+        # His gain does not match the credits exactly (an unknown +1): not confirmed, but he did
+        # gain something, so the spot is not taken for an HQ.
+        wave(match, GARRISON, team=("b0", "b1"), credited="off", extra=1)
+    assert match.garrisons("off") == 0
+    confirm(match, "off", GARRISON, team=("b2", "b3"))
+    assert match.garrisons("off") == 1
 
 
 def test_garrison_built_on_own_supplies(match):

@@ -10,8 +10,9 @@ Between two polls, the gain of a player whose role can build a garrison is expla
 A gain that a garrison can explain only makes a **candidate**. Several sources give the same +50
 (commander abilities, the supplies of a player consumed by someone else's construction, a spawn
 wave), so a garrison is only counted once teammates spawn at its position **and** the builder gets
-the matching spawn credits: only the owner of a spawn point gets them. A garrison nobody spawns on
-within ``CONFIRMATION_SECONDS`` is not counted.
+the matching spawn credits: only the owner of a spawn point gets them. A candidate nobody spawned on
+within ``CONFIRMATION_SECONDS`` stays dormant until the end of the match: it can still be confirmed
+later, also by teammates of several squads spawning on it (an outpost only takes its squad).
 
 One garrison at most is considered between two polls: building another one needs 50 more supplies
 and a new spot.
@@ -25,6 +26,7 @@ from itertools import product
 from rcon.actions_tracking.context import (
     MAX_POLL_INTERVAL,
     SPAWN_POINT_RADIUS,
+    SPAWN_POINT_TTL,
     Gain,
     PollContext,
     SpawnLedger,
@@ -49,6 +51,9 @@ RESIDUAL_TOLERANCE = 20
 CONFIRMATION_MARGIN = 1_500
 # Uncredited spawns at a spot before a candidate was made there: a point that credits nobody (HQ).
 UNCREDITED_SPAWNS_HQ = 3
+# A dormant candidate is confirmed by spawns of at least this many different squads (outposts only
+# take their own squad; players without a squad count as one more group).
+DORMANT_MIN_SQUADS = 2
 # Two candidates of one builder this close share their spawns: only one can be confirmed.
 SAME_GARRISON_DISTANCE = 10_000
 # Their candidates are not drawn on the live map: the commander's +50 are nearly always abilities
@@ -158,16 +163,21 @@ class GarrisonDetector(ActionDetector):
         }
         return decisions
 
-    def live(self, ledger: SpawnLedger, names: dict[str, str]) -> list[dict]:
+    def live(
+        self, ledger: SpawnLedger, names: dict[str, str], now: float | None
+    ) -> list[dict]:
         """Garrisons to draw on the live map: candidates, and confirmed ones still in use.
 
         Destruction is not observable: a confirmed garrison is shown while it remains a known spawn
         point of its builder, i.e. until nobody spawned on it for ``SPAWN_POINT_TTL``. Candidates of
-        the commander are left out (``MAP_HIDDEN_CANDIDATE_ROLES``).
+        the commander are left out (``MAP_HIDDEN_CANDIDATE_ROLES``), and so are dormant candidates
+        older than ``SPAWN_POINT_TTL``.
         """
         result = []
         for candidate in self.candidates:
             if candidate.get("role") in MAP_HIDDEN_CANDIDATE_ROLES:
+                continue
+            if now is not None and now - candidate["ts"] > SPAWN_POINT_TTL:
                 continue
             result.append(
                 self._live(candidate, candidate["player_id"], "candidate", None, names)
@@ -377,6 +387,9 @@ class GarrisonDetector(ActionDetector):
                 "role": prev["role"],
             }
         )
+        self.candidates[-1]["uncredited_before"] = self._uncredited_before(
+            ctx, self.candidates[-1]
+        )
         reason = (
             "a garrison explains the gain"
             if h0[0] > 0
@@ -403,6 +416,8 @@ class GarrisonDetector(ActionDetector):
             for candidate in self.candidates:
                 if candidate["player_id"] == player_id:
                     wave = self._wave_at(ctx, candidate)
+                    if not wave and candidate.get("dormant"):
+                        wave = self._squads_wave_at(ctx, candidate)
                     if wave:
                         spread = sum(
                             distance(s["x"], s["y"], candidate["x"], candidate["y"])
@@ -415,7 +430,50 @@ class GarrisonDetector(ActionDetector):
             for spawn in wave:
                 spawn["credited_to"] = player_id
             decisions += self._confirm(ctx, candidate)
+        self._count_uncredited(ctx)
         return decisions
+
+    def _squads_wave_at(self, ctx: PollContext, candidate: dict) -> list[dict]:
+        """A dormant candidate's late confirmation: teammates of several squads spawned on it.
+
+        Several squads rule out an outpost (squad only). The spot must not be an HQ nor a teammate's
+        spawn point, and the builder, if still connected in the team, must have got a spawn credit
+        in this poll (the exact amount is not required: other gains may be mixed in).
+        """
+        player_id = candidate["player_id"]
+        builder = ctx.current.get(player_id)
+        gain = ctx.gains.get(player_id)
+        connected = builder is not None and builder.team == candidate["team"]
+        if connected and (
+            gain is None or gain.is_gap or gain.points < self.table.spawn_team
+        ):
+            return []
+        if self._uncredited_spawn_point(ctx, candidate):
+            return []
+        since = gain.prev["ts"] if gain else ctx.ts - MAX_POLL_INTERVAL / 4
+        foreign = self._foreign(ctx, candidate)
+
+        def on_candidate(spawn: dict) -> bool:
+            here = distance(spawn["x"], spawn["y"], candidate["x"], candidate["y"])
+            return here <= SPAWN_POINT_RADIUS and all(
+                here + CONFIRMATION_MARGIN
+                < distance(spawn["x"], spawn["y"], p["x"], p["y"])
+                for p in foreign
+            )
+
+        wave = [
+            s
+            for s in ctx.spawns.spawns
+            if s["team"] == candidate["team"]
+            and s["player_id"] != player_id
+            and s["credited_to"] is None
+            and since - MAX_POLL_INTERVAL / 4 < s["ts"] <= ctx.ts
+            and on_candidate(s)
+        ]
+        squads = {s["unit_id"] for s in wave}
+        if len(wave) < 2 or len(squads) < DORMANT_MIN_SQUADS:
+            return []
+        return wave
 
     def _wave_at(self, ctx: PollContext, candidate: dict) -> list[dict]:
         """The spawns on the candidate, if they credited the builder; empty otherwise.
@@ -436,7 +494,7 @@ class GarrisonDetector(ActionDetector):
             or ctx.ts <= candidate["ts"]
         ):
             return []
-        if self._uncredited_spawn_point(ctx, candidate, gain.prev["ts"]):
+        if self._uncredited_spawn_point(ctx, candidate):
             return []
         # Spawns as close to one of his existing spawn points (outpost, garrisons) belong to it.
         known_before = [
@@ -474,13 +532,17 @@ class GarrisonDetector(ActionDetector):
             and s["credited_to"] in (None, player_id)
             and since - MAX_POLL_INTERVAL / 4 < s["ts"] <= ctx.ts
         ]
+        # Spawn points and candidates of teammates: spawns near them are theirs. A dormant candidate
+        # is checked against them too: a teammate may have built a garrison next to it since.
+        foreign = self._foreign(ctx, candidate)
+        excluded = known_before + (foreign if candidate.get("dormant") else [])
 
         def on_candidate(spawn: dict) -> bool:
             here = distance(spawn["x"], spawn["y"], candidate["x"], candidate["y"])
             return here <= SPAWN_POINT_RADIUS and all(
                 here + CONFIRMATION_MARGIN
                 < distance(spawn["x"], spawn["y"], p["x"], p["y"])
-                for p in known_before
+                for p in excluded
             )
 
         wave = [s for s in pool if on_candidate(s)]
@@ -489,11 +551,6 @@ class GarrisonDetector(ActionDetector):
         # His other credits can only come from his other known spawn points (outpost, garrisons);
         # spawns also near a teammate's spawn point or candidate are not certain to be his.
         own_points = ctx.spawns.of(player_id)
-        foreign = ctx.spawns.of_teammates(player_id, candidate["team"], ctx.players) + [
-            c
-            for c in self.candidates
-            if c["player_id"] != player_id and c["team"] == candidate["team"]
-        ]
         others = [
             s
             for s in pool
@@ -512,21 +569,68 @@ class GarrisonDetector(ActionDetector):
             return wave
         return []
 
-    def _uncredited_spawn_point(
-        self, ctx: PollContext, candidate: dict, wave_since: float
-    ) -> bool:
-        """Earlier waves here credited nobody (the HQ), before or since the candidate."""
-        earlier = [
-            s
+    def _foreign(self, ctx: PollContext, candidate: dict) -> list[dict]:
+        """Spawn points and candidates of the builder's teammates."""
+        return ctx.spawns.of_teammates(
+            candidate["player_id"], candidate["team"], ctx.players
+        ) + [
+            c
+            for c in self.candidates
+            if c["player_id"] != candidate["player_id"]
+            and c["team"] == candidate["team"]
+        ]
+
+    def _uncredited_spawn_point(self, ctx: PollContext, candidate: dict) -> bool:
+        """Teammates spawn here without crediting the builder: an HQ, not his garrison.
+
+        Counted: uncredited spawns before the candidate (the point existed before it), and spawns
+        since then while the builder, connected, gained nothing (``_count_uncredited``). A wave
+        whose credits did not match exactly does not count: the builder did gain something.
+        """
+        before = candidate.get("uncredited_before")
+        if before is None:  # candidate saved by an older version
+            before = self._uncredited_before(ctx, candidate)
+        return before + candidate.get("uncredited", 0) >= UNCREDITED_SPAWNS_HQ
+
+    @staticmethod
+    def _uncredited_before(ctx: PollContext, candidate: dict) -> int:
+        """Uncredited spawns at the candidate's spot before it existed. Kept on the candidate when
+        it is made: the spawn history only covers the last minutes."""
+        return sum(
+            1
             for s in ctx.spawns.spawns
             if s["team"] == candidate["team"]
             and s["player_id"] != candidate["player_id"]
-            and s["ts"] <= wave_since - MAX_POLL_INTERVAL / 4
+            and s["ts"] < candidate["ts"]
             and s["credited_to"] is None
             and distance(s["x"], s["y"], candidate["x"], candidate["y"])
             <= SPAWN_POINT_RADIUS
-        ]
-        return len(earlier) >= UNCREDITED_SPAWNS_HQ
+        )
+
+    def _count_uncredited(self, ctx: PollContext) -> None:
+        """Spawns on a candidate that brought its connected builder nothing, in this poll nor in
+        the next one (the credit of a spawn can come one poll later)."""
+        for candidate in self.candidates:
+            player_id = candidate["player_id"]
+            builder = ctx.current.get(player_id)
+            if builder is None or builder.team != candidate["team"]:
+                candidate.pop("awaiting", None)
+                continue
+            credited = player_id in ctx.gains
+            if not credited:
+                candidate["uncredited"] = candidate.get(
+                    "uncredited", 0
+                ) + candidate.get("awaiting", 0)
+            new = [
+                s
+                for s in ctx.spawns.at(ctx.ts)
+                if s["team"] == candidate["team"]
+                and s["player_id"] != player_id
+                and s["credited_to"] is None
+                and distance(s["x"], s["y"], candidate["x"], candidate["y"])
+                <= SPAWN_POINT_RADIUS
+            ]
+            candidate["awaiting"] = 0 if credited else len(new)
 
     def _wave_credited(
         self,
@@ -589,7 +693,8 @@ class GarrisonDetector(ActionDetector):
                 ctx.name(player_id),
                 self.action,
                 CONFIRMED,
-                "teammates spawned on it and credited the builder",
+                "teammates spawned on it and credited the builder"
+                + (" (after it went dormant)" if candidate.get("dormant") else ""),
                 candidate["gain"],
                 details={"built_at": candidate["ts"]},
             )
@@ -612,16 +717,26 @@ class GarrisonDetector(ActionDetector):
         return decisions
 
     def _expire_candidates(self, ctx: PollContext) -> list[Decision]:
-        return [
-            self._reject(
-                candidate,
-                ctx.ts,
-                f"nobody spawned on it within {CONFIRMATION_SECONDS:.0f}s",
-                ctx.names,
+        """Candidates not confirmed in time stay dormant until the end of the match."""
+        decisions = []
+        for candidate in self.candidates:
+            if candidate.get("dormant") or ctx.ts < candidate["deadline"]:
+                continue
+            candidate["dormant"] = True
+            decisions.append(
+                Decision(
+                    ctx.ts,
+                    candidate["player_id"],
+                    ctx.name(candidate["player_id"]),
+                    self.action,
+                    PENDING,
+                    f"not confirmed within {CONFIRMATION_SECONDS:.0f}s: kept until the end of "
+                    "the match, spawns of several squads on it can still confirm it",
+                    candidate["gain"],
+                    details={"built_at": candidate["ts"]},
+                )
             )
-            for candidate in list(self.candidates)
-            if ctx.ts >= candidate["deadline"]
-        ]
+        return decisions
 
     def _reject(
         self, candidate: dict, ts: float, reason: str, names: dict[str, str]

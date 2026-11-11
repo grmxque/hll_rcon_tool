@@ -72,7 +72,7 @@ requires dying, so the role of the construction is the role before). Default: `o
 **A garrison is only counted once teammates spawn on it.** Several sources give the same +50 as a garrison:
 commander abilities (Encouraged, Airhead, Final Stand, Recon Plane, Reinforce, Supply Drop, Ammo Drop), the
 supplies of a player consumed by someone else's construction, a spawn wave. The support gain only makes a
-**candidate**; a garrison nobody spawns on within 5 minutes is never counted.
+**candidate**; a garrison nobody ever spawns on is never counted.
 
 **Deployed players.** Seen in game: a dead player is reported at (0, 0, 0), but a player in the menus (just
 connected, choosing a team or a role) is reported at a fixed position near the edge of the map, and a body stays
@@ -114,13 +114,24 @@ can come one poll after it):
 - in that explanation, the spawns on his own known points are all counted first (they do credit him), and the
   wave is still needed: otherwise those teammates spawned at a point that credits nobody. Spawns also near
   another player's spawn point or candidate are not counted as his;
-- earlier waves at that spot, before or since the candidate, did not credit anybody (an HQ).
+- the spot is not an HQ: at least 3 teammates spawned there without crediting anybody before the
+  candidate existed, or since then while the builder, connected, gained nothing in that poll nor in the
+  next one. A wave whose credits did not match exactly does not count: the builder did gain something.
 
 Only the owner of a spawn point gets credits, so HQ spawns next to a commander, or next to an officer whose
 supplies were just consumed by someone else, confirm nothing. When a builder has several candidates near the
 wave, the closest one is confirmed and his other candidates within 100 m are rejected (they would share its
 spawns). Spawns near another player's candidate are left to that player when explaining his own gains.
-Candidates not confirmed within 5 minutes, or at the end of the match, are rejected.
+A candidate not confirmed within 5 minutes becomes **dormant** until the end of the match (a garrison built in
+advance and used later). It can still be confirmed by the rule above, or by teammates of **at least two
+squads** spawning on it in one poll (players without a squad count as one more group): an outpost only takes
+its own squad. The builder, if still connected in the team, must then have got at least one spawn credit in that
+poll, the exact amount is not required. The spot must not be an HQ, and those spawns must be clearly closer to
+the candidate (15 m) than to a teammate's spawn point or candidate: a teammate may have built a garrison next to
+it since. Dormant candidates are rejected at the end of the match.
+
+Players without a squad have no unit (CRCON gives `unit_id` 0 to both Able and them): their spawn credits a
+garrison builder +3, never +5.
 
 **Data gaps** (more than 20 s between two polls: RCON outage, service restart): the positions during the gap
 are unknown, so a garrison built then cannot be confirmed and is not counted.
@@ -196,7 +207,8 @@ passive production stream (the nodes keep producing after a class change).
 
 ## Known limits
 
-- A garrison nobody spawns on within 5 minutes is not counted (simulation: about 14 % of the garrisons). Among
+- A garrison nobody spawns on is not counted (simulation: about 13 % of the garrisons, mostly destroyed before
+  being used). Among
   the garrisons used, about 4 % are missed: a credit that matches two possible spawns is given to the one on
   the builder's known spawn point, or the builder left.
 - A garrison rebuilt in place of the builder's own previous one cannot be told from it (its spawns are those
