@@ -34,3 +34,40 @@ export function withDeadPositions(players, lastPositions) {
     return known ? { ...player, x: known.x, y: known.y, dead: true } : player;
   });
 }
+
+/**
+ * Next deployment state of each player (player_id → {x, y, deaths, team, deployed}).
+ *
+ * A player in the menus (just connected, choosing a team or a role) is reported at a fixed
+ * position near the edge of the map, not at (0, 0, 0), and a dead body stays where it died for
+ * a few seconds with the death already counted. So after connecting while the page is open,
+ * dying or changing team, a player is only deployed once his position changes. Players already
+ * there when the page opened (``initial``) are taken as reported.
+ */
+export function updateDeployment(previous, players, { initial = false } = {}) {
+  const next = new Map();
+  for (const player of players) {
+    const known = previous.get(player.player_id);
+    let deployed;
+    if (!player.alive) deployed = false;
+    else if (!known) deployed = initial;
+    else if (player.deaths > known.deaths || player.team !== known.team) deployed = false;
+    else if (known.deployed) deployed = true;
+    else deployed = player.x !== known.x || player.y !== known.y;
+    next.set(player.player_id, {
+      x: player.x,
+      y: player.y,
+      deaths: player.deaths,
+      team: player.team,
+      deployed,
+    });
+  }
+  return next;
+}
+
+/** Players not deployed yet are treated as dead (``alive: false``). */
+export function withDeployment(players, states) {
+  return players.map((player) =>
+    player.alive && states.get(player.player_id)?.deployed === false ? { ...player, alive: false } : player,
+  );
+}

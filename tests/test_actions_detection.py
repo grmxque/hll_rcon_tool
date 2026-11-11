@@ -671,3 +671,61 @@ def test_simulated_matches_with_an_outage():
     assert result["garrison_fp"] <= 1
     # Garrisons built during the outage cannot be confirmed (their position is unknown).
     assert result["garrison_fn_used"] <= 0.11 * result["garrison_used"]
+
+
+# Deployment screen and menus (seen in game, tests/fixtures/actions/deployment_screen.jsonl)
+def test_recorded_spawns_after_menus_deaths_and_redeploys():
+    """Real polls: player-a in the menus at a fixed position, spawns at a HQ, dies (body kept 4 s
+    at the place of the death), respawns 22 m away, redeploys from the menu, spawns at two
+    other HQs; player-b joins from the menus."""
+    engine = ActionsEngine()
+    spawns = []
+    path = "tests/fixtures/actions/deployment_screen.jsonl"
+    with open(path, encoding="utf-8") as file:
+        for line in file:
+            snapshot = PollSnapshot.from_dict(json.loads(line))
+            engine.observe(snapshot)
+            spawns += [
+                (round(s["ts"], 1), s["player_id"])
+                for s in engine.spawns.at(snapshot.ts)
+            ]
+    assert spawns == [
+        (1230.9, "player-a"),  # first spawn, from the menus
+        (1280.0, "player-a"),  # same HQ, 22 m from the body: not a revive
+        (1321.6, "player-a"),  # after a redeploy from the menu
+        (1347.2, "player-b"),  # first spawn, from the menus
+        (1370.5, "player-a"),
+        (1450.6, "player-b"),
+    ]
+
+
+def test_teammate_joining_from_the_menus_confirms_a_garrison(match):
+    build(match, "off", GARRISON)
+    # Connected and choosing a role: reported at a fixed position at the edge of the map.
+    match.add("late", unit_id=4, pos=(1950.0, 300.0), still=True)
+    match.idle(9)
+    match.players["late"].still = False
+    match.spawn(["late"], at=GARRISON)  # first spawn, on the garrison
+    match.gain("off", 3)
+    match.poll()
+    assert match.garrisons("off") == 1
+
+
+def test_player_in_the_menus_cannot_build(match):
+    match.add("menus", role="officer", unit_id=5, pos=(1950.0, 300.0), still=True)
+    match.poll()
+    match.gain("menus", 50)
+    match.poll()
+    assert match.engine.detectors["garrison"].candidates == []
+
+
+def test_crcon_started_mid_match_sees_no_spawns():
+    m = Match()
+    for index in range(5):
+        m.add(f"p{index}", pos=(100.0 * index, 300.0))
+    m.poll()
+    for _ in range(3):
+        for player in m.players.values():
+            player.pos = (player.pos[0] + 3, player.pos[1])  # walking
+        m.poll()
+    assert m.engine.spawns.spawns == []

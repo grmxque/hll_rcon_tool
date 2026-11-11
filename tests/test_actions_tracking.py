@@ -1,5 +1,6 @@
 """Redis persistence, banner, recording and replay of the actions tracking."""
 
+import itertools
 import json
 from unittest.mock import Mock
 
@@ -44,6 +45,8 @@ def config(monkeypatch):
 
 
 ROLES = {"off": "officer", "cmd": "armycommander"}
+# Players in the game move: a fixed position is the menus (see ActionsEngine._deployed).
+_steps = itertools.count()
 
 
 def players(mate=None, **support):
@@ -57,7 +60,11 @@ def players(mate=None, **support):
             "role": ROLES.get(player_id[:3], "engineer"),
             "support": points,
             "deaths": 0,
-            "world_position": {"x": 1000.0 + 30_000 * index, "y": 1000.0, "z": 10.0},
+            "world_position": {
+                "x": 1000.0 + 30_000 * index + next(_steps) * 0.001,
+                "y": 1000.0,
+                "z": 10.0,
+            },
         }
         for index, (player_id, points) in enumerate(support.items())
     }
@@ -155,8 +162,8 @@ def test_live_garrisons_candidate_then_confirmed(red, config):
     tracker.observe_poll(rcon, MATCH, players(off=0), now=10_003)
     tracker.observe_poll(rcon, MATCH, players(off=50), now=10_006)
     [candidate] = tracker.live_garrisons(MATCH["start"])
-    assert candidate == {
-        "x": 1000.0,
+    assert candidate["x"] == pytest.approx(1000.0, abs=1)
+    assert candidate == candidate | {
         "y": 1000.0,
         "team": "allies",
         "status": "candidate",

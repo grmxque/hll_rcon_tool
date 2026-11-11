@@ -61,7 +61,11 @@ so only give it to trusted admins.
 - Sector owners: the score is the number of sectors each team holds, counted from its spawn side
   (`Map.allies_direction`). Only for layers with 5 sectors of 3 capture zones (Warfare, Offensive).
 - World axes: `x` towards the east, `y` towards the south (game centimetres), mapped directly onto image pixels.
-- A position of exactly (0, 0, 0) is treated as dead / on the deployment screen (`alive: false`). The server
+- A position of exactly (0, 0, 0) is treated as dead / on the deployment screen (`alive: false`). A player in
+  the menus (just connected, choosing a team or a role) is reported at a fixed position near the edge of the map,
+  and a body stays at the place of the death for a few seconds: after connecting while the page is open, dying or
+  changing team, a player is drawn alive only once his position changes (`deadPlayers.js::updateDeployment`).
+  Players already there when the page opens are drawn as reported. The server
   does not keep the death location: the page remembers each player's last alive position in the browser
   (`deadPlayers.js`) and draws dead players there. It is forgotten when they spawn again, switch team, leave,
   or a new match starts. A player who died before the page was opened has no known position and is not drawn.

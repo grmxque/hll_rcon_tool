@@ -21,6 +21,9 @@ class P:
     support: int = 0
     deaths: int = 0
     pos: tuple[float, float] | None = (500.0, 500.0)
+    # In the menus: the server reports a fixed position. Others move a little at every poll, as
+    # players in the game do (the tracking only takes a player as deployed once he moved).
+    still: bool = False
 
     def sample(self) -> PlayerSample:
         x, y = self.pos if self.pos else (0.0, 0.0)
@@ -77,6 +80,9 @@ class Match:
 
     def poll(self, after: float | None = None):
         self.ts += self.interval if after is None else after
+        for player in self.players.values():
+            if player.pos is not None and not player.still:
+                player.pos = (player.pos[0] + 0.001, player.pos[1])
         snapshot = PollSnapshot(
             ts=self.ts, players=tuple(p.sample() for p in self.players.values())
         )

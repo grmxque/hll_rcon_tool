@@ -7,6 +7,7 @@ and recorded polls can be replayed (``__main__.py``).
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 
 from rcon.actions_tracking.context import (
     MAX_POLL_INTERVAL,
@@ -83,7 +84,13 @@ class ActionsEngine:
             return []  # already processed (replayed poll) or match over
         ts = snapshot.ts
         global_gap = self.last_ts is not None and ts - self.last_ts > MAX_POLL_INTERVAL
-        current = {p.player_id: p for p in snapshot.players}
+        raw = {p.player_id: p for p in snapshot.players}
+        current = {
+            player_id: sample
+            if self._deployed(sample, self.players.get(player_id))
+            else replace(sample, x=0.0, y=0.0, z=0.0)
+            for player_id, sample in raw.items()
+        }
         for sample in snapshot.players:
             self.names[sample.player_id] = sample.name
         if (
@@ -116,8 +123,8 @@ class ActionsEngine:
         for detector in self.detectors.values():
             decisions += detector.observe(ctx)
 
-        for sample in current.values():
-            self._remember(sample, ts)
+        for player_id, sample in current.items():
+            self._remember(sample, raw[player_id], ts)
         self.spawns.prune(ts)
         self.last_ts = ts
         return decisions
@@ -185,8 +192,43 @@ class ActionsEngine:
             )
         return None
 
-    def _remember(self, sample: PlayerSample, ts: float) -> None:
-        prev = self.players.get(sample.player_id) or {}
+    @staticmethod
+    def _deployed(sample: PlayerSample, prev: dict | None) -> bool:
+        """Whether the player is in the game, not dead nor in the menus.
+
+        The game reports (0, 0, 0) for a dead player, but a player in the menus (just connected,
+        choosing a team or a role) is reported at a fixed position near the edge of the map, and a
+        dead body stays at the place of the death for a few seconds with the death already counted.
+        So after connecting, dying or changing team, a player is only deployed once his position
+        changes (seen in game, see docs/actions-tracking.md).
+        """
+        position = (sample.x, sample.y, sample.z)
+        if position == (0.0, 0.0, 0.0) or prev is None:
+            return False
+        if sample.deaths > prev["deaths"] or sample.team != prev["team"]:
+            return False
+        if prev.get("deployed", prev["alive"]):
+            return True
+        return position != tuple(prev.get("raw", (0.0, 0.0, 0.0)))
+
+    def _remember(self, sample: PlayerSample, raw: PlayerSample, ts: float) -> None:
+        """``sample`` as the detectors saw it (undeployed: at (0, 0, 0)), ``raw`` as reported."""
+        prev = self.players.get(sample.player_id)
+        raw_position = (raw.x, raw.y, raw.z)
+        if prev is None and raw_position != (0.0, 0.0, 0.0):
+            # First seen at a position: if he only walks from there he was already in the game
+            # (CRCON started mid-match), not spawning.
+            last_alive, deaths_alive = [raw.x, raw.y], raw.deaths
+        else:
+            prev = prev or {}
+            last_alive = (
+                [sample.x, sample.y] if sample.alive else prev.get("last_alive")
+            )
+            deaths_alive = (
+                sample.deaths
+                if sample.alive
+                else prev.get("deaths_alive", sample.deaths)
+            )
         self.players[sample.player_id] = {
             "ts": ts,
             "team": sample.team,
@@ -197,10 +239,8 @@ class ActionsEngine:
             "x": sample.x,
             "y": sample.y,
             "alive": sample.alive,
-            "last_alive": [sample.x, sample.y]
-            if sample.alive
-            else prev.get("last_alive"),
-            "deaths_alive": sample.deaths
-            if sample.alive
-            else prev.get("deaths_alive", sample.deaths),
+            "deployed": sample.alive,
+            "raw": list(raw_position),
+            "last_alive": last_alive,
+            "deaths_alive": deaths_alive,
         }

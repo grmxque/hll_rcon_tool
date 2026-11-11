@@ -74,6 +74,13 @@ commander abilities (Encouraged, Airhead, Final Stand, Recon Plane, Reinforce, S
 supplies of a player consumed by someone else's construction, a spawn wave. The support gain only makes a
 **candidate**; a garrison nobody spawns on within 5 minutes is never counted.
 
+**Deployed players.** Seen in game: a dead player is reported at (0, 0, 0), but a player in the menus (just
+connected, choosing a team or a role) is reported at a fixed position near the edge of the map, and a body stays
+at the place of the death for about 4 s with the death already counted. A redeploy from the menu behaves like a
+death. So after connecting, dying or changing team, a player is treated as dead (at (0, 0, 0)) until his
+position changes (`ActionsEngine._deployed`). A player first seen when the tracking starts mid-match and who
+only walks from there was already in the game: no spawn.
+
 **Spawns.** A teammate spawned when they come back alive after being dead or on the deployment screen, unless
 they are within 25 m of where they went down without a new death (revive), or when their deaths increase with
 a jump of more than 100 m between two polls. Spawns of the previous poll stay usable once (the credit and the
@@ -202,9 +209,7 @@ passive production stream (the nodes keep producing after a class change).
   unconfirmed. A repair station built in the last 150 s of a match counts as a node.
 - Constructions before the first poll of the tracking (CRCON started mid-match) are invisible, except nodes
   found through their passive production.
-- A player on the deployment screen is recognised by the position (0, 0, 0). After a redeploy from the menu,
-  the server was seen reporting another position (the enemy HQ) instead: that position is then taken for a
-  spawn, and the real spawn that follows is missed. Under investigation (`--trace`).
+- A player who spawns and stays perfectly still is only seen as spawned when he first moves.
 - HLL (WW2) only.
 
 ## Tests
