@@ -230,7 +230,7 @@ export default function MapSidebar({
           control={
             <Checkbox size="small" checked={showSpawnPoints} onChange={(e) => onShowSpawnPoints(e.target.checked)} />
           }
-          label={`Show spawn points (${spawnCounts.hq} HQ, ${spawnCounts.outpost} outposts, ${spawnCounts.airhead} airheads)`}
+          label={`Show spawn points (${spawnCounts.outpost} outposts, ${spawnCounts.airhead} airheads)`}
         />
       </Box>
 

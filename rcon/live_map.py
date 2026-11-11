@@ -124,7 +124,7 @@ class LiveMapSpawnPoint(TypedDict):
     team: str | None
     #: "garrison" here is only seen from the spawns (not counted for its builder): the counted
     #: ones are in ``garrisons``. "airhead" is a possible one.
-    kind: Literal["hq", "garrison", "outpost", "airhead"]
+    kind: Literal["garrison", "outpost", "airhead"]
     #: Player credited for the spawns there (garrisons and outposts).
     owner_id: str | None
     owner_name: str | None
@@ -132,6 +132,8 @@ class LiveMapSpawnPoint(TypedDict):
     first_seen: float
     last_seen: float
     spawns: int
+    #: Seen from a single spawn, or an airhead (drawn see-through).
+    possible: bool
 
 
 class LiveMap(TypedDict):

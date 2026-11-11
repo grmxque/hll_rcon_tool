@@ -161,7 +161,7 @@ function demoGarrisons() {
   ];
 }
 
-// Spawn points seen from the spawns: HQs, outposts, a possible airhead.
+// Spawn points seen from the spawns: outposts, a possible airhead.
 function demoSpawnPoints() {
   const now = Date.now() / 1000;
   const spawnPoint = (spot, team, kind, owner, spawns) => ({
@@ -174,10 +174,9 @@ function demoSpawnPoints() {
     first_seen: now - 20 * 60,
     last_seen: now - 25,
     spawns,
+    possible: spawns < 2 || kind === "airhead",
   });
   return [
-    spawnPoint("Blactot", "allies", "hq", null, 42),
-    spawnPoint("La Maison Des Ormes", "axis", "hq", null, 38),
     spawnPoint("Farm Ruins", "allies", "outpost", "grmxque", 6),
     spawnPoint("Canal Locks", "axis", "outpost", "Hans", 4),
     spawnPoint("Town Center", "allies", "airhead", null, 5),

@@ -164,17 +164,30 @@ happened, once the detectors had the time to give its credit to a spawn point ow
 20 min is forgotten (destroyed, moved, or no longer used). Each point keeps its spawns per squad, those of the
 commander and of players without a squad, the credits per owner and the uncredited spawns, and is classified:
 
+The HQs are at the start of each team, never in the middle of the map. With the sectors known (Warfare,
+Offensive: see [Sector captures](#sector-captures)), a point **away from the team's home sector** (the end of
+the row it starts from) is never an HQ:
+
+| Kind | Evidence, away from the home sector |
+| --- | --- |
+| `outpost` | only one squad spawned there, from the first spawn (outpost spawns are not always seen crediting the officer) |
+| `airhead` | several squads, credits nobody, used for 3 min at most (possible) |
+| `garrison` | several squads, the commander or players without a squad (they never use an outpost) |
+
+In the home sector, or when the sectors are unknown (Skirmish, older recordings):
+
 | Kind | Evidence |
 | --- | --- |
-| `garrison` | a garrison confirmed there, or it credits its owner and is used by several squads, the commander or players without a squad (they never use an outpost) |
+| `garrison` | it credits its owner and is used by several squads, the commander or players without a squad |
 | `outpost` | it credits its owner and only his squad spawns there (at least 2 spawns) |
-| `hq` | at least 3 teammates spawned there without crediting anybody, and it was used within 3 min of the start of the tracked match, or for more than 10 min, or the commander spawned there |
+| `hq` | in the home sector, several squads from the first 3 min of the match; or at least 3 teammates spawned there without crediting anybody, and it was used within 3 min of the start of the tracked match or for more than 10 min |
 | `airhead` | at least 3 uncredited spawns of several squads, placed during the match, not an HQ (possible) |
-| `unknown` | anything else: one credited spawn, few uncredited spawns, uncredited spawns of one squad, the commander alone |
+| `unknown` | anything else: one spawn, few uncredited spawns, uncredited spawns of one squad, the commander alone (he also spawns on garrisons) |
 
-Only officers and the commander get their spawn credits analysed (the garrison builder roles): the outposts of
-a spotter credit nobody that the tracking knows, so they are `unknown`. The airhead and HQ timings are
-assumptions to check against recorded matches (`replay --spawns`).
+A garrison confirmed by the garrison detector always makes its point a `garrison`. Two garrisons of a team are
+never within 200 m (game rule): a `garrison` point that close to a confirmed garrison or to a more used one
+becomes `unknown`. Only officers and the commander get their spawn credits analysed (the garrison builder
+roles). The airhead and HQ timings are assumptions to check against recorded matches (`replay --spawns`).
 
 ## Sector captures
 
@@ -191,7 +204,8 @@ lost the sector:
 - its garrison candidates in the sector are rejected (they can no longer be spawned on, so never confirmed);
 - its confirmed garrisons there stay counted for the rewards, but are no longer drawn on the live map nor
   given the spawns around them, and the spawn points its players had there are forgotten;
-- its spawn points there (`SpawnPoints`, HQ excepted) are deleted, including the spawns not settled yet;
+- its spawn points there (`SpawnPoints`) are deleted, a point classified as an HQ included (an HQ is never
+  in a capturable sector, so it was a mistake), including the spawns not settled yet;
   spawns there after the capture start new points.
 
 Each capture is logged by the log loop and printed by `replay --spawns`.

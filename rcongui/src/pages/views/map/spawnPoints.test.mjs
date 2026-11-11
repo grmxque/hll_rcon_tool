@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { SPAWN_POINT_KINDS, spawnPointCounts, spawnPointDescription, visibleSpawnPoints } from "./spawnPoints.js";
+import { spawnPointCounts, spawnPointDescription, visibleSpawnPoints } from "./spawnPoints.js";
 
 const point = (kind, team = "allies", extra = {}) => ({
   x: 0,
@@ -16,11 +16,11 @@ const point = (kind, team = "allies", extra = {}) => ({
 });
 
 test("spawn points follow the option and the team filter", () => {
-  const all = [point("hq"), point("outpost", "axis"), point("unknown")];
+  const all = [point("garrison"), point("outpost", "axis"), point("hq")];
   assert.deepEqual(visibleSpawnPoints(all, { show: false, visibleTeams: {} }), []);
   assert.deepEqual(
     visibleSpawnPoints(all, { show: true, visibleTeams: { allies: true, axis: false } }).map((p) => p.kind),
-    ["hq"],
+    ["garrison"],
   );
   assert.deepEqual(visibleSpawnPoints(undefined, { show: true, visibleTeams: {} }), []);
 });
@@ -36,19 +36,19 @@ test("tooltips", () => {
   });
 });
 
+test("a point seen from a single spawn says so", () => {
+  assert.deepEqual(spawnPointDescription(point("outpost", "allies", { spawns: 1, possible: true }), 1_230_000), {
+    title: "Outpost",
+    lines: ["1 spawn seen · last one 30 s ago", "Seen from a single spawn so far"],
+  });
+});
+
 test("counts", () => {
-  assert.deepEqual(spawnPointCounts([point("hq"), point("hq"), point("airhead")]), {
-    hq: 2,
-    outpost: 0,
+  assert.deepEqual(spawnPointCounts([point("outpost"), point("outpost"), point("airhead"), point("hq")]), {
+    outpost: 2,
     airhead: 1,
     garrison: 0,
   });
-  assert.deepEqual(spawnPointCounts(undefined), { hq: 0, outpost: 0, airhead: 0, garrison: 0 });
+  assert.deepEqual(spawnPointCounts(undefined), { outpost: 0, airhead: 0, garrison: 0 });
 });
 
-test("game icons, a letter for the HQ", () => {
-  assert.equal(SPAWN_POINT_KINDS.hq.icon, null);
-  for (const kind of ["outpost", "airhead", "garrison"]) {
-    assert.match(SPAWN_POINT_KINDS[kind].icon, /^\/icons\/map\/[a-z]+\.png$/);
-  }
-});

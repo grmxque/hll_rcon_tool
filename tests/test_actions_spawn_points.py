@@ -92,7 +92,7 @@ def point(**values):
                 "commander": 1,
                 "uncredited": 4,
             },
-            HQ,
+            UNKNOWN,  # the commander also spawns on garrisons: no HQ evidence
         ),
         (
             {
@@ -114,7 +114,7 @@ def point(**values):
         "uncredited from the start",
         "uncredited, placed during the match",
         "uncredited, one squad",
-        "uncredited, commander",
+        "uncredited, commander: not an HQ",
         "uncredited, used for 10 min",
         "commander only",
     ],
@@ -211,18 +211,18 @@ def test_live_points(match):
     wave(match, (1500.0, 1500.0), squad=("a6",))  # one spawn: unknown, not drawn
     settle(match)
     engine = match.engine
+    assert point_at(match, HQ_POS)["kind"] == "hq"
     live = {p["kind"]: p for p in engine.points.live(engine.names, engine.last_ts)}
-    assert set(live) == {"hq", "outpost"}
+    assert set(live) == {"outpost"}  # HQs are not drawn
     assert (
         live["outpost"] | {"owner_id": "off", "owner_name": "Off", "spawns": 4}
         == live["outpost"]
     )
-    assert live["hq"]["owner_id"] is None
     # Next to a garrison marker: drawn as the garrison only.
     hidden = [{"team": "allies", "x": 95_000.0, "y": 95_000.0}]
     assert [
         p["kind"] for p in engine.points.live(engine.names, engine.last_ts, hidden)
-    ] == ["hq"]
-    # An outpost nobody spawned on for 5 min is no longer drawn; the HQ stays.
+    ] == []
+    # An outpost nobody spawned on for 5 min is no longer drawn.
     later = engine.last_ts + 6 * 60
-    assert [p["kind"] for p in engine.points.live(engine.names, later)] == ["hq"]
+    assert engine.points.live(engine.names, later) == []

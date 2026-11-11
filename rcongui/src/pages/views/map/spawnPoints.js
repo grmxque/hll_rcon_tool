@@ -1,14 +1,13 @@
 // Spawn points seen from the spawns of the match (rcon/actions_tracking/spawns.py), as sent by
-// /api/get_live_map: HQs, outposts, possible airheads, and garrisons only seen from the spawns (the
-// garrisons counted for their builder are in `garrisons`).
-import { GARRISON_ICON, formatAge } from "./garrisons.js";
+// /api/get_live_map: outposts, possible airheads, and garrisons only seen from the spawns (the garrisons
+// counted for their builder are in `garrisons`). HQs are not sent. Each kind is drawn with its icon
+// (mapIcons.jsx).
+import { formatAge } from "./garrisons.js";
 
-// Game icons (assets/hll/images/icons/map, see docs/live-map.md); the HQ has none: a letter is drawn.
 export const SPAWN_POINT_KINDS = {
-  hq: { letter: "H", icon: null, title: "HQ", possible: false },
-  outpost: { letter: "O", icon: "/icons/map/outpost.png", title: "Outpost", possible: false },
-  airhead: { letter: "A", icon: "/icons/map/airhead.png", title: "Possible airhead", possible: true },
-  garrison: { letter: "G", icon: GARRISON_ICON, title: "Garrison (seen from the spawns)", possible: false },
+  outpost: { title: "Outpost", possible: false },
+  airhead: { title: "Possible airhead", possible: true },
+  garrison: { title: "Garrison (seen from the spawns)", possible: false },
 };
 
 /** Spawn points to draw: the option is on and their team is shown. */
@@ -27,12 +26,13 @@ export function spawnPointDescription(point, nowMs) {
     `${point.spawns} spawn${point.spawns === 1 ? "" : "s"} seen · last one ${formatAge(nowSeconds - point.last_seen)} ago`,
   );
   if (kind?.possible) lines.push("Credits nobody, used by several squads, placed during the match");
+  else if (point.possible) lines.push("Seen from a single spawn so far");
   return { title: kind?.title ?? point.kind, lines };
 }
 
 /** Number of points per kind, for the sidebar. */
 export function spawnPointCounts(points) {
-  const counts = { hq: 0, outpost: 0, airhead: 0, garrison: 0 };
+  const counts = { outpost: 0, airhead: 0, garrison: 0 };
   for (const point of points ?? []) {
     if (point.kind in counts) counts[point.kind] += 1;
   }

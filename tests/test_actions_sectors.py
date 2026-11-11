@@ -249,3 +249,106 @@ def test_replay_shows_the_captures(match, tmp_path, capsys):
     )
     assert cli.main(["replay", str(path), "--spawns"]) == 0
     assert "sector 3 captured from allies" in capsys.readouterr().out
+
+
+# ------------------------------------------------------------------ HQs only at the start of each team
+
+
+@pytest.mark.parametrize(
+    "owners, team, index, expected",
+    [
+        (("allies", "allies", None, "axis", "axis"), "allies", 0, True),
+        (("allies", "allies", None, "axis", "axis"), "allies", 1, False),
+        (("allies", "allies", None, "axis", "axis"), "axis", 4, True),
+        (("allies", "allies", None, "axis", "axis"), "axis", 2, False),
+        ((None, None, None, None, None), "allies", 0, None),
+    ],
+)
+def test_in_home_area(owners, team, index, expected):
+    from rcon.actions_tracking.sectors import in_home_area
+
+    assert in_home_area(bands(*owners), team, x_in(index), 50_000) is expected
+
+
+def test_outside_the_sectors_can_be_an_hq():
+    from rcon.actions_tracking.sectors import in_home_area
+
+    assert in_home_area(bands("allies", "axis"), "allies", x_in(-1), 50_000) is True
+
+
+def point_kind(m, at):
+    point = m.engine.points.near("allies", at[0] * 100, at[1] * 100)
+    return point and point["kind"]
+
+
+def test_uncredited_spawns_of_one_squad_mid_map_are_an_outpost(match):
+    # At the start of the match, squad A only, crediting nobody, in sector 2.
+    outposts = (1000.0, 900.0)
+    wave(match, outposts, squad=("a0", "a1", "a2", "a3"))
+    match.idle(SETTLE_SECONDS + 3)
+    assert point_kind(match, outposts) == "outpost"  # not an HQ: away from the start
+
+
+def test_one_spawn_mid_map_is_a_possible_outpost(match):
+    outpost = (1000.0, 900.0)
+    match.idle(200)
+    wave(match, outpost, squad=("a0",))
+    match.idle(SETTLE_SECONDS + 3)
+    engine = match.engine
+    [drawn] = engine.points.live(engine.names, engine.last_ts)
+    assert (drawn["kind"], drawn["possible"]) == ("outpost", True)
+
+
+def test_uncredited_spawns_of_several_squads_mid_map(match):
+    spot = (1000.0, 900.0)
+    match.idle(200)
+    wave(match, spot, squad=("a0", "a1"), team=("b0", "b1"))
+    match.idle(SETTLE_SECONDS + 3)
+    assert point_kind(match, spot) == "airhead"  # recent, credits nobody
+    match.idle(200)
+    wave(match, spot, squad=("a2",), team=("b2",))
+    match.idle(SETTLE_SECONDS + 3)
+    assert (
+        point_kind(match, spot) == "garrison"
+    )  # used for longer than an airhead lasts
+
+
+def test_hq_in_the_home_sector(match):
+    hq = (100.0, 900.0)  # sector 0, the allies start
+    wave(match, hq, squad=("a0", "a1"), team=("b0", "b1"))
+    match.idle(SETTLE_SECONDS + 3)
+    assert point_kind(match, hq) == "hq"
+
+
+def test_a_point_wrongly_classified_hq_goes_with_the_captured_sector():
+    from rcon.actions_tracking.spawns import SpawnLedger, SpawnPoints
+
+    sector = band(2, "axis")
+    points = SpawnPoints(
+        {
+            "points": [
+                {"id": 1, "team": "allies", "kind": "hq", "x": x_in(2), "y": 50_000},
+                {"id": 2, "team": "allies", "kind": "hq", "x": x_in(0), "y": 50_000},
+                {"id": 3, "team": "axis", "kind": "outpost", "x": x_in(2), "y": 50_000},
+            ]
+        }
+    )
+    points.sector_captured("allies", sector, SpawnLedger())
+    assert [p["id"] for p in points.points] == [2, 3]
+
+
+def test_garrisons_seen_from_the_spawns_are_never_close_together(match):
+    match.idle(400)
+    for spot in (
+        (1000.0, 900.0),
+        (1060.0, 900.0),
+    ):  # 60 m apart, both used by several squads
+        for _ in range(2):
+            wave(match, spot, squad=("a0",), team=("b0",), credited="off")
+            match.idle(SETTLE_SECONDS + 3)
+    kinds = sorted(
+        p["kind"]
+        for p in match.engine.points.points
+        if p["kind"] in ("garrison", "unknown")
+    )
+    assert kinds == ["garrison", "unknown"]
