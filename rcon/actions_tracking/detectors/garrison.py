@@ -43,6 +43,7 @@ from rcon.actions_tracking.model import (
     PlayerSample,
 )
 from rcon.actions_tracking.rules import ScoreTable
+from rcon.actions_tracking.sectors import inside
 from rcon.actions_tracking.spawns import AIRHEAD, HQ, OUTPOST, SpawnLedger
 
 CONFIRMATION_SECONDS = 300.0
@@ -174,6 +175,41 @@ class GarrisonDetector(ActionDetector):
         }
         return decisions
 
+    def sector_captured(self, capture: dict, ctx: PollContext) -> list[Decision]:
+        """The team lost the sector: its garrisons there are destroyed.
+
+        Candidates there can no longer be confirmed: rejected. Confirmed garrisons stay counted
+        but are no longer drawn nor own the spawns around them, and their builders' spawn points
+        there are forgotten.
+        """
+        team, sector = capture["team"], capture["sector"]
+        decisions = [
+            self._reject(
+                candidate,
+                ctx.ts,
+                "sector captured by the enemy: destroyed before anybody spawned on it",
+                ctx.names,
+            )
+            for candidate in list(self.candidates)
+            if candidate["team"] == team
+            and inside(sector, candidate["x"], candidate["y"])
+        ]
+        for built in self.garrisons.values():
+            for garrison in built:
+                if (
+                    garrison["team"] == team
+                    and "destroyed_at" not in garrison
+                    and inside(sector, garrison["x"], garrison["y"])
+                ):
+                    garrison["destroyed_at"] = ctx.ts
+        for player_id, points in list(ctx.spawns.points.items()):
+            if ctx.players.get(player_id, {}).get("team") != team:
+                continue
+            for point in points:
+                if inside(sector, point["x"], point["y"]):
+                    ctx.spawns.forget(player_id, point["x"], point["y"])
+        return decisions
+
     def live(
         self, ledger: SpawnLedger, names: dict[str, str], now: float | None
     ) -> list[dict]:
@@ -196,6 +232,8 @@ class GarrisonDetector(ActionDetector):
         for player_id, built in self.garrisons.items():
             points = ledger.of(player_id)
             for garrison in built:
+                if "destroyed_at" in garrison:
+                    continue
                 seen = [
                     p["last_ts"]
                     for p in points
@@ -641,7 +679,7 @@ class GarrisonDetector(ActionDetector):
         # Spawns as close to one of his existing spawn points (outpost, garrisons) belong to it.
         known_before = [
             p for p in ctx.spawns.of(player_id) if p["since"] < candidate["ts"]
-        ] + self.garrisons.get(player_id, [])
+        ] + [g for g in self.garrisons.get(player_id, []) if "destroyed_at" not in g]
         windows = [(gain.prev["ts"], gain.points)]
         previous = self.recent_gains.get(player_id)
         if previous and previous["ts"] == gain.prev["ts"] and not previous["gap"]:
@@ -722,7 +760,7 @@ class GarrisonDetector(ActionDetector):
             for player_id, built in self.garrisons.items()
             if player_id != candidate["player_id"]
             for garrison in built
-            if garrison["team"] == candidate["team"]
+            if garrison["team"] == candidate["team"] and "destroyed_at" not in garrison
         ]
 
     def _foreign(self, ctx: PollContext, candidate: dict) -> list[dict]:

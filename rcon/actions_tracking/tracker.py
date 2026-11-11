@@ -19,6 +19,7 @@ from rcon.actions_tracking.model import (
     PlayerSample,
     PollSnapshot,
 )
+from rcon.actions_tracking.sectors import FRONT, front_zone
 from rcon.cache_utils import get_redis_client
 from rcon.types import GetDetailedPlayers, MapInfo
 from rcon.user_config.end_of_game_rewards import EndOfGameRewardsUserConfig
@@ -30,6 +31,11 @@ STATE_TTL = 6 * 60 * 60
 MAX_STORED_DECISIONS = 2_000
 SNAPSHOT_FILES_KEPT = 20
 CONFIG_CACHE_SECONDS = 15.0
+# Live map: garrisons and spawn points on the front line (a sector the team does not hold, or one
+# next to it) nobody spawned on for this long are probably destroyed. Behind the front, the 20 min
+# of the spawn points apply.
+FRONT_STALE_SECONDS = 300.0
+SECTOR_KEYS = ("x_min", "y_min", "x_max", "y_max", "owner")
 
 _config_cache: tuple[float, EndOfGameRewardsUserConfig] | None = None
 
@@ -63,7 +69,31 @@ def make_engine(
     )
 
 
-def snapshot_from_players(dp: GetDetailedPlayers, ts: float) -> PollSnapshot:
+def sectors_of(rcon) -> tuple[dict, ...]:
+    """Sectors of the running layer and their owners from the score, as the live map computes
+    them (cached RCON reads: the log loop has just read the game state). Empty when unknown."""
+    from rcon.live_map import build_layer  # rcon.live_map imports this module
+
+    try:
+        gamestate = rcon.get_gamestate()
+        layer = build_layer(
+            rcon.get_map().id,
+            rcon.game_profile.game,
+            score=(int(gamestate["allied_score"]), int(gamestate["axis_score"])),
+        )
+    except Exception:
+        logger.warning("Actions tracking: sectors unknown for this poll", exc_info=True)
+        return ()
+    if layer is None:
+        return ()
+    return tuple(
+        {key: sector[key] for key in SECTOR_KEYS} for sector in layer["sectors"]
+    )
+
+
+def snapshot_from_players(
+    dp: GetDetailedPlayers, ts: float, sectors: tuple[dict, ...] = ()
+) -> PollSnapshot:
     samples = []
     for player_id, player in dp["players"].items():
         position = player.get("world_position") or {}
@@ -98,7 +128,7 @@ def snapshot_from_players(dp: GetDetailedPlayers, ts: float) -> PollSnapshot:
                 level=counter("level"),
             )
         )
-    return PollSnapshot(ts=ts, players=tuple(samples))
+    return PollSnapshot(ts=ts, players=tuple(samples), sectors=sectors)
 
 
 def _load_state(red, map_start: int) -> dict | None:
@@ -166,7 +196,9 @@ def observe_poll(
         map_start = current_map.get("start")
         if not map_start or current_map.get("end") is not None or not dp.get("players"):
             return
-        snapshot = snapshot_from_players(dp, now if now is not None else time.time())
+        snapshot = snapshot_from_players(
+            dp, now if now is not None else time.time(), sectors_of(rcon)
+        )
         if config.record_actions_snapshots:
             try:
                 _record_snapshot(map_start, snapshot)
@@ -174,7 +206,15 @@ def observe_poll(
                 logger.exception("Actions tracking: could not record the snapshot")
         red = get_redis_client()
         engine = make_engine(config, _load_state(red, map_start))
+        captures_before = len(engine.captures)
         decisions = engine.observe(snapshot)
+        for capture in engine.captures[captures_before:]:
+            logger.info(
+                "Actions tracking: sector %s captured from %s, its garrisons and outposts there "
+                "are destroyed",
+                capture["index"] + 1,
+                capture["team"],
+            )
         _save_state(red, map_start, engine)
         _report(red, map_start, decisions)
         if config.thanks_banner_enabled and any(d.counted for d in decisions):
@@ -221,12 +261,31 @@ def live_tracking(map_start: int | None) -> dict[str, list[dict]]:
     garrisons = engine.detectors["garrison"].live(
         engine.spawns, engine.names, engine.last_ts
     )
+    spawn_points = engine.points.live(engine.names, engine.last_ts, hidden=garrisons)
     return {
-        "garrisons": garrisons,
-        "spawn_points": engine.points.live(
-            engine.names, engine.last_ts, hidden=garrisons
-        ),
+        "garrisons": [
+            g
+            for g in garrisons
+            if not _stale_on_front(
+                engine,
+                g,
+                g["last_seen"] if g["status"] == "confirmed" else g["built_at"],
+            )
+        ],
+        "spawn_points": [
+            p
+            for p in spawn_points
+            if p["kind"] == "hq" or not _stale_on_front(engine, p, p["last_seen"])
+        ],
     }
+
+
+def _stale_on_front(engine: ActionsEngine, item: dict, last_use: float | None) -> bool:
+    """On the front line and nobody spawned on it for ``FRONT_STALE_SECONDS``."""
+    if engine.last_ts is None or last_use is None:
+        return False
+    zone = front_zone(engine.sectors, item["team"], item["x"], item["y"])
+    return zone == FRONT and engine.last_ts - last_use > FRONT_STALE_SECONDS
 
 
 def stored_decisions(map_start: int) -> list[dict]:

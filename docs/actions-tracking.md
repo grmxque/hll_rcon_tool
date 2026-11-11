@@ -28,6 +28,7 @@ between two polls with the score sources that can produce it, within what the ga
 | `rules.py` | `ScoreTable` (what the game gives) and `GameRules` (what it makes impossible) |
 | `context.py` | `PollContext` given to the detectors: current samples, previous samples, support gains, spawns and spawn points |
 | `spawns.py` | `SpawnLedger` (recent teammate spawns and the spawn points learned for each player; a spawn credits a single player) and `SpawnPoints` (every spawn grouped by position and classified: HQ, garrison, outpost, airhead) |
+| `sectors.py` | sectors and their owners (from the score), captures, front line |
 | `detectors/` | one `ActionDetector` per action (`garrison.py`, `node.py`), registered in `detectors/__init__.py` |
 | `engine.py` | `ActionsEngine`: counter checks (reconnection, team change, stats leak), spawns, runs the detectors, summary. Pure, JSON state |
 | `tracker.py` | Redis persistence, log loop entry point, end of match, snapshot recording |
@@ -174,6 +175,26 @@ commander and of players without a squad, the credits per owner and the uncredit
 Only officers and the commander get their spawn credits analysed (the garrison builder roles): the outposts of
 a spotter credit nobody that the tracking knows, so they are `unknown`. The airhead and HQ timings are
 assumptions to check against recorded matches (`replay --spawns`).
+
+## Sector captures
+
+When a team captures a sector, the game destroys every garrison and outpost of the other team in it. It is
+the only destruction the polls can date. At each poll, `tracker.sectors_of()` reads the sectors of the layer
+and their owners as the live map derives them from the score (`rcon.live_map.build_layer`: Warfare and
+Offensive only; cached RCON reads, no extra traffic). They are part of the recorded polls, so a replay
+reproduces the captures.
+
+A capture is a sector whose last known owner was one team and is now the other one (an unknown or neutral
+owner in between is ignored; nothing is inferred from the first poll with sectors). Then, for the team that
+lost the sector:
+
+- its garrison candidates in the sector are rejected (they can no longer be spawned on, so never confirmed);
+- its confirmed garrisons there stay counted for the rewards, but are no longer drawn on the live map nor
+  given the spawns around them, and the spawn points its players had there are forgotten;
+- its spawn points there (`SpawnPoints`, HQ excepted) are deleted, including the spawns not settled yet;
+  spawns there after the capture start new points.
+
+Each capture is logged by the log loop and printed by `replay --spawns`.
 
 ## Nodes
 

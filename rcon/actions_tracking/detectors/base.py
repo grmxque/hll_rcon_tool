@@ -45,6 +45,11 @@ class ActionDetector(ABC):
     def observe(self, ctx: PollContext) -> list[Decision]:
         """Decisions for the interval between the previous poll and ``ctx.ts``."""
 
+    def sector_captured(self, capture: dict, ctx: PollContext) -> list[Decision]:
+        """``capture["team"]`` lost ``capture["sector"]`` in this poll: its garrisons and outposts
+        there are destroyed (``rcon/actions_tracking/sectors.py``). Called before ``observe``."""
+        return []
+
     def finalize(self, end_ts: float, names: dict[str, str]) -> list[Decision]:
         """Settle what is still pending at the end of the match."""
         return []
