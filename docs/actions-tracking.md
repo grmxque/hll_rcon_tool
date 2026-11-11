@@ -128,7 +128,14 @@ squads** spawning on it in one poll (players without a squad count as one more g
 its own squad. The builder, if still connected in the team, must then have got at least one spawn credit in that
 poll, the exact amount is not required. The spot must not be an HQ, and those spawns must be clearly closer to
 the candidate (15 m) than to a teammate's spawn point or candidate: a teammate may have built a garrison next to
-it since. Dormant candidates are rejected at the end of the match.
+it since. A dormant candidate is also confirmed by a single spawn of a player who has no outpost to spawn on:
+the commander, or a player without a squad.
+
+The commander only spawns at the HQ or on a garrison. His own spawn within 50 m of one of his candidates, after
+it was created, confirms it (it credits nobody, so the exact rule above cannot see it), unless he had already
+spawned at that spot before the candidate (an HQ), teammates spawned there without crediting anybody (an HQ),
+or the spawn is not clearly closer to the candidate (15 m) than to a teammate's spawn point or candidate.
+Dormant candidates are rejected at the end of the match.
 
 Players without a squad have no unit (CRCON gives `unit_id` 0 to both Able and them): their spawn credits a
 garrison builder +3, never +5.
@@ -217,6 +224,8 @@ passive production stream (the nodes keep producing after a class change).
 - A garrison less than 100 m from another one of the same builder is counted once.
 - A commander ability used during a spawn wave on a fresh point right next to him that credits him exactly
   could be confirmed (simulation: one false garrison in 40 matches).
+- A commander who spawns on an Airhead placed right where he scored +50 for another ability would confirm a
+  false garrison (he places the Airhead from the map, usually far from where he stands).
 - A node and a repair station are identical when built; a node destroyed before its first tick stays
   unconfirmed. A repair station built in the last 150 s of a match counts as a node.
 - Constructions before the first poll of the tracking (CRCON started mid-match) are invisible, except nodes

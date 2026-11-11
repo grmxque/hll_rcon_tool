@@ -22,6 +22,7 @@ def match():
     m.add("cmd", role="armycommander", unit_id=-1, pos=(100.0, 100.0))
     m.add("axis_off", team="axis", role="officer", unit_id=0, pos=(1500.0, 1500.0))
     m.poll()
+    m.poll()  # everybody moved: deployed (see ActionsEngine._deployed)
     return m
 
 
@@ -800,3 +801,72 @@ def test_crcon_started_mid_match_sees_no_spawns():
             player.pos = (player.pos[0] + 3, player.pos[1])  # walking
         m.poll()
     assert m.engine.spawns.spawns == []
+
+
+# The commander and players without a squad cannot spawn on an outpost.
+def respawn(m, player_id, at):
+    m.die(player_id)
+    m.idle(15)
+    m.spawn([player_id], at=at)
+    return m.poll()
+
+
+def test_commander_spawning_on_his_own_garrison_confirms_it(match):
+    build(match, "cmd", (1300.0, 1300.0))
+    respawn(match, "cmd", (1302.0, 1301.0))  # alone on the server: no teammate credit
+    assert match.garrisons("cmd") == 1
+    assert "the commander spawned on it" in match.decisions[-1].reason
+
+
+def test_commander_ability_at_the_hq_then_respawn_at_the_hq(match):
+    respawn(match, "cmd", HQ)  # his HQ, before any +50
+    match.idle(20)
+    match.gain("cmd", 50)  # supply drop, standing at the HQ
+    match.poll()
+    respawn(match, "cmd", HQ)
+    match.idle(310)
+    match.finalize()
+    assert match.garrisons("cmd") == 0
+
+
+def test_commander_ability_elsewhere_then_respawn_at_the_hq(match):
+    build(match, "cmd", (1300.0, 1300.0))  # ability, not a garrison
+    respawn(match, "cmd", HQ)
+    match.idle(310)
+    match.finalize()
+    assert match.garrisons("cmd") == 0
+
+
+def test_commander_spawning_on_a_teammates_garrison_next_to_his_candidate(match):
+    build(match, "off2", (1300.0, 1300.0))
+    confirm(match, "off2", (1300.0, 1300.0), team=("a0",))
+    build(match, "cmd", (1310.0, 1300.0))  # ability on off2's garrison
+    respawn(match, "cmd", (1300.0, 1301.0))  # spawns on off2's garrison
+    match.idle(310)
+    match.finalize()
+    assert match.garrisons("cmd") == 0
+    assert match.garrisons("off2") == 1
+
+
+def test_commander_spawn_on_a_dormant_candidate_confirms_it(match):
+    build(match, "off", GARRISON)
+    match.idle(310)  # dormant
+    match.die("cmd")
+    match.idle(15)
+    match.spawn(["cmd"], at=GARRISON)
+    match.gain("off", 3 + 1)  # his credit, mixed with an unknown +1
+    match.poll()
+    assert match.garrisons("off") == 1
+
+
+def test_player_without_a_squad_on_a_dormant_candidate_confirms_it(match):
+    match.add("solo", unit_id=None)
+    match.poll()
+    build(match, "off", GARRISON)
+    match.idle(310)
+    match.die("solo")
+    match.idle(15)
+    match.spawn(["solo"], at=GARRISON)
+    match.gain("off", 3 + 1)
+    match.poll()
+    assert match.garrisons("off") == 1
