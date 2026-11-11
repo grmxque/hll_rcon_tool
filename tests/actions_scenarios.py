@@ -10,6 +10,7 @@ from rcon.actions_tracking.engine import ActionsEngine
 from rcon.actions_tracking.model import PlayerSample, PollSnapshot
 
 HQ = (50.0, 50.0)
+SECTOR_WIDTH = 400.0  # metres
 
 
 @dataclass
@@ -49,6 +50,11 @@ class Match:
         self.engine = ActionsEngine(**engine_kwargs)
         self.decisions = []
         self.snapshots: list[PollSnapshot] = []
+        self.sector_owners: tuple[str | None, ...] = ()
+
+    def sectors(self, *owners: str | None) -> None:
+        """Sectors from the next poll on: vertical bands of 400 m from x = 0, left to right."""
+        self.sector_owners = owners
 
     def add(self, player_id: str, **values) -> P:
         player = P(player_id, **values)
@@ -84,7 +90,18 @@ class Match:
             if player.pos is not None and not player.still:
                 player.pos = (player.pos[0] + 0.001, player.pos[1])
         snapshot = PollSnapshot(
-            ts=self.ts, players=tuple(p.sample() for p in self.players.values())
+            ts=self.ts,
+            players=tuple(p.sample() for p in self.players.values()),
+            sectors=tuple(
+                {
+                    "x_min": index * SECTOR_WIDTH * 100,
+                    "y_min": 0.0,
+                    "x_max": (index + 1) * SECTOR_WIDTH * 100,
+                    "y_max": 2_000 * 100.0,
+                    "owner": owner,
+                }
+                for index, owner in enumerate(self.sector_owners)
+            ),
         )
         self.snapshots.append(snapshot)
         decisions = self.engine.observe(snapshot)

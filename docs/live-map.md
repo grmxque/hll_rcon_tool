@@ -45,6 +45,11 @@ player, refreshed every 2 seconds.
   the rules of the rewards). A point appears 20 s after the spawns that reveal it; outposts and airheads
   disappear 5 minutes after their last spawn, HQs stay. Points with too few spawns to be classified are not
   drawn. The tooltip gives the player credited for the spawns, the number of spawns and the last one.
+- Front line (Warfare / Offensive, sector owners from the score): garrisons and outposts of a team disappear
+  as soon as the other team captures their sector (the game destroys them). On the front line, a sector the
+  team does not hold or one of its sectors next to it, a garrison or spawn point nobody spawned on for
+  5 minutes is no longer drawn (probably destroyed); behind the front the 20 minutes apply. A candidate counts
+  from its detection. HQs always stay.
 
 ## Permission
 
@@ -103,9 +108,10 @@ exists in the Vite dev server; production builds do not contain it.
 - Strongpoints are not shown: the game server has no command to read the active objectives of the match in
   progress, so drawing the 15 possible ones would be misleading.
 - Garrisons are those detected from the scores (see above), with the actions tracking delay and limits: a
-  garrison nobody spawns on stays "possible" for 20 minutes (it can still be confirmed later), a destroyed one
-  stays drawn until
-  20 minutes without spawn. The game server exposes no spawn point (neither RCON commands nor logs): HQs,
-  outposts and airheads are inferred from where players spawn and who gets the credits, so an outpost nobody
-  used yet is not shown, and the spotters' outposts are not told apart (their credits are not analysed).
+  garrison nobody spawns on stays "possible" for 20 minutes (it can still be confirmed later). Besides a
+  capture of its sector, a destroyed garrison stays drawn until nobody spawned on it for 20 minutes (5 on the
+  front line). Sector owners come from the score, so a sector being captured counts only once the score
+  changes. The game server exposes no spawn point (neither RCON commands nor logs): HQs, outposts and
+  airheads are inferred from where players spawn and who gets the credits, so an outpost nobody used yet is
+  not shown, and the spotters' outposts are not told apart (their credits are not analysed).
 - Vehicles are not shown separately: crew members appear at the vehicle's position.

@@ -148,6 +148,11 @@ def main(argv=None) -> int:
         return 0
     if args.spawns:
         print_spawn_points(points, engine.first_ts, engine.names)
+        for capture in engine.captures:
+            print(
+                f"+{capture['ts'] - (engine.first_ts or 0):6.0f}s sector {capture['index'] + 1} "
+                f"captured from {capture['team']}: its garrisons and outposts there are destroyed"
+            )
         return 0
     for decision in decisions:
         if args.player and decision.player_id != args.player:

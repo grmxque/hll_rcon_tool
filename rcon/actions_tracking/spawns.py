@@ -25,6 +25,7 @@ from rcon.actions_tracking.context import (
     distance,
 )
 from rcon.actions_tracking.model import PlayerSample
+from rcon.actions_tracking.sectors import inside
 
 
 class SpawnLedger:
@@ -331,6 +332,24 @@ class SpawnPoints:
             if p["team"] == team and self._near(p, x, y)
         ]
         return min(found, key=lambda f: f[0])[1] if found else None
+
+    def sector_captured(self, team: str, sector: dict, ledger: SpawnLedger) -> None:
+        """``team`` lost ``sector``: its spawn points there are destroyed (not its HQ). Its spawns
+        there not settled yet must not bring them back."""
+        self.points = [
+            p
+            for p in self.points
+            if p["team"] != team
+            or p["kind"] == HQ
+            or not inside(sector, p["x"], p["y"])
+        ]
+        for spawn in ledger.spawns:
+            if (
+                "point" not in spawn
+                and spawn["team"] == team
+                and inside(sector, spawn["x"], spawn["y"])
+            ):
+                spawn["point"] = None
 
     def live(
         self,

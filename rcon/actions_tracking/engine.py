@@ -31,6 +31,7 @@ from rcon.actions_tracking.rules import (
     GameRules,
     ScoreTable,
 )
+from rcon.actions_tracking.sectors import track_owners
 from rcon.actions_tracking.spawns import SpawnLedger, SpawnPoints
 
 
@@ -57,6 +58,9 @@ class ActionsEngine:
         self.first_ts: float | None = state.get("first_ts")
         self.spawns = SpawnLedger(state.get("spawns"))
         self.points = SpawnPoints(state.get("spawn_points"))
+        # Sectors with their current and last known owner, and the captures seen (diagnostics).
+        self.sectors: list[dict] = state.get("sectors", [])
+        self.captures: list[dict] = state.get("captures", [])
         detector_states = state.get("detectors", {})
         self.detectors: dict[str, ActionDetector] = {
             cls.action: cls(
@@ -77,6 +81,8 @@ class ActionsEngine:
             "first_ts": self.first_ts,
             "spawns": self.spawns.to_state(),
             "spawn_points": self.points.to_state(),
+            "sectors": self.sectors,
+            "captures": self.captures,
             "detectors": {
                 action: detector.to_state()
                 for action, detector in self.detectors.items()
@@ -126,6 +132,10 @@ class ActionsEngine:
             spawns=self.spawns,
             points=self.points,
         )
+        if snapshot.sectors:
+            self.sectors, captures = track_owners(self.sectors, snapshot.sectors)
+            for capture in captures:
+                decisions += self._sector_captured(capture, ctx)
         for detector in self.detectors.values():
             decisions += detector.observe(ctx)
 
@@ -136,6 +146,17 @@ class ActionsEngine:
         self.points.update(self.spawns, ts, self.first_ts)
         self.spawns.prune(ts)
         self.last_ts = ts
+        return decisions
+
+    def _sector_captured(self, capture: dict, ctx: PollContext) -> list[Decision]:
+        """The garrisons and outposts of the team that lost the sector are destroyed."""
+        self.captures.append(
+            {"ts": ctx.ts, "team": capture["team"], "index": capture["index"]}
+        )
+        self.points.sector_captured(capture["team"], capture["sector"], self.spawns)
+        decisions = []
+        for detector in self.detectors.values():
+            decisions += detector.sector_captured(capture, ctx)
         return decisions
 
     def finalize(self, end_ts: float | None = None) -> list[Decision]:

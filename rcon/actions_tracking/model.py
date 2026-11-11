@@ -54,15 +54,23 @@ class PlayerSample:
 class PollSnapshot:
     ts: float
     players: tuple[PlayerSample, ...]
+    # Sectors and their owners at this poll (``rcon/actions_tracking/sectors.py``); empty when
+    # unknown (layer without front line, game state unavailable, older recordings).
+    sectors: tuple[dict, ...] = ()
 
     def to_dict(self) -> dict:
-        return {"ts": self.ts, "players": [asdict(p) for p in self.players]}
+        return {
+            "ts": self.ts,
+            "players": [asdict(p) for p in self.players],
+            "sectors": [dict(s) for s in self.sectors],
+        }
 
     @classmethod
     def from_dict(cls, data: dict) -> PollSnapshot:
         return cls(
             ts=float(data["ts"]),
             players=tuple(PlayerSample.from_dict(p) for p in data["players"]),
+            sectors=tuple(data.get("sectors") or ()),
         )
 
 
