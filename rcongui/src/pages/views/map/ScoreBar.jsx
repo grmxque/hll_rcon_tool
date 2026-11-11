@@ -22,8 +22,8 @@ const TeamScore = ({ faction, fallback, score, players, team, reverse }) => (
   <Stack
     direction={reverse ? "row-reverse" : "row"}
     alignItems="center"
-    spacing={1.5}
-    sx={{ flex: 1, justifyContent: "flex-end" }}
+    spacing={{ xs: 1, sm: 1.5 }}
+    sx={{ flex: 1, minWidth: 0, justifyContent: "flex-end" }}
   >
     {faction && (
       <Box
@@ -33,18 +33,27 @@ const TeamScore = ({ faction, fallback, score, players, team, reverse }) => (
         onError={(event) => {
           event.currentTarget.style.display = "none";
         }}
-        sx={{ width: 32, height: 32, objectFit: "contain" }}
+        sx={{ width: { xs: 24, sm: 32 }, height: { xs: 24, sm: 32 }, objectFit: "contain", flexShrink: 0 }}
       />
     )}
-    <Box sx={{ textAlign: reverse ? "left" : "right" }}>
-      <Typography variant="subtitle1" sx={{ fontWeight: 600, lineHeight: 1.2 }}>
+    <Box sx={{ textAlign: reverse ? "left" : "right", minWidth: 0 }}>
+      <Typography variant="subtitle1" noWrap sx={{ fontWeight: 600, lineHeight: 1.2 }}>
         {factionLabel(faction, fallback)}
       </Typography>
-      <Typography variant="caption" color="text.secondary">
+      <Typography variant="caption" color="text.secondary" noWrap component="div">
         {players} players
       </Typography>
     </Box>
-    <Typography variant="h4" sx={{ fontWeight: 700, color: TEAM_COLORS[team], minWidth: 32, textAlign: "center" }}>
+    <Typography
+      variant="h4"
+      sx={(theme) => ({
+        fontWeight: 700,
+        color: TEAM_COLORS[team],
+        minWidth: { xs: 24, sm: 32 },
+        textAlign: "center",
+        [theme.breakpoints.down("sm")]: { fontSize: "1.5rem" },
+      })}
+    >
       {score}
     </Typography>
   </Stack>
@@ -54,8 +63,8 @@ const TeamScore = ({ faction, fallback, score, players, team, reverse }) => (
 export default function ScoreBar({ score, layer }) {
   if (!score) return null;
   return (
-    <Paper variant="outlined" sx={{ px: 2, py: 1 }}>
-      <Stack direction="row" alignItems="center" spacing={2}>
+    <Paper variant="outlined" sx={{ px: { xs: 1, sm: 2 }, py: 1, flexShrink: 0 }}>
+      <Stack direction="row" alignItems="center" spacing={{ xs: 1, sm: 2 }}>
         <TeamScore
           team="allies"
           faction={score.allied_faction}
@@ -63,8 +72,15 @@ export default function ScoreBar({ score, layer }) {
           score={score.allied}
           players={score.allied_players}
         />
-        <Box sx={{ textAlign: "center", minWidth: 110 }}>
-          <Typography variant="h6" sx={{ fontVariantNumeric: "tabular-nums", lineHeight: 1.2 }}>
+        <Box sx={{ textAlign: "center", minWidth: { xs: 80, sm: 110 } }}>
+          <Typography
+            variant="h6"
+            sx={(theme) => ({
+              fontVariantNumeric: "tabular-nums",
+              lineHeight: 1.2,
+              [theme.breakpoints.down("sm")]: { fontSize: "1rem" },
+            })}
+          >
             {formatTime(score.time_remaining_seconds)}
           </Typography>
           {layer && (

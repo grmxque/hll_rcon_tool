@@ -100,3 +100,21 @@ export function isTeleport(previous, next, maxStep) {
 export function relativeZoom(view, viewport) {
   return view.scale / fitView(viewport).scale;
 }
+
+/**
+ * View for a viewport that changed size (phone rotation, full screen): keeps the map point at the
+ * centre of the screen and the relative zoom. Fits the whole map when there was no viewport yet.
+ */
+export function resizeView(view, previousViewport, nextViewport) {
+  if (!previousViewport.width || !previousViewport.height) return fitView(nextViewport);
+  const scale = relativeZoom(view, previousViewport) * fitView(nextViewport).scale;
+  const centre = {
+    x: (previousViewport.width / 2 - view.x) / view.scale,
+    y: (previousViewport.height / 2 - view.y) / view.scale,
+  };
+  return {
+    scale,
+    x: nextViewport.width / 2 - centre.x * scale,
+    y: nextViewport.height / 2 - centre.y * scale,
+  };
+}

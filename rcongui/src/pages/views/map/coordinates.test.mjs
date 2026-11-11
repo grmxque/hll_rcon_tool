@@ -8,6 +8,7 @@ import {
   gridGeometry,
   isTeleport,
   relativeZoom,
+  resizeView,
   worldLengthToMap,
   worldToMap,
   zoomAt,
@@ -61,4 +62,19 @@ test("centering puts the point in the middle of the viewport", () => {
   assert.equal(relativeZoom(view, VIEWPORT), 4);
   assert.equal(100 * view.scale + view.x, VIEWPORT.width / 2);
   assert.equal(900 * view.scale + view.y, VIEWPORT.height / 2);
+});
+
+test("resizing keeps the centre and the relative zoom", () => {
+  const view = centerOn(fitView(VIEWPORT), { x: 100, y: 900 }, VIEWPORT);
+  const rotated = { width: 400, height: 800 };
+  const resized = resizeView(view, VIEWPORT, rotated);
+
+  assert.ok(Math.abs(relativeZoom(resized, rotated) - 4) < 1e-9);
+  assert.ok(Math.abs(100 * resized.scale + resized.x - rotated.width / 2) < 1e-9);
+  assert.ok(Math.abs(900 * resized.scale + resized.y - rotated.height / 2) < 1e-9);
+});
+
+test("the first viewport size fits the whole map", () => {
+  const initial = { scale: 1, x: 0, y: 0 };
+  assert.deepEqual(resizeView(initial, { width: 0, height: 0 }, VIEWPORT), fitView(VIEWPORT));
 });

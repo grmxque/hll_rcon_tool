@@ -15,6 +15,11 @@ player, refreshed every 2 seconds.
     `can_view_recent_logs`) on the log history kept in Redis by the log loop.
 - Markers glide between refreshes; a move of more than 150 m in one refresh (respawn at a garrison or OP)
   is shown as a jump.
+- On a phone the map is a square as wide as the screen, with the sidebar under it. Resizing the window or
+  rotating the phone keeps the centre and the zoom.
+- Full-screen button (under the zoom buttons): the map and the score cover the whole screen; the same button or
+  Esc leaves it. Browsers with the Fullscreen API also hide their own bars; iPhone Safari has none, so the
+  map then covers the page only.
 - Scroll wheel / pinch to zoom, drag to move, buttons to zoom and to show the whole map. Names are drawn from
   2.5× zoom on (option in the sidebar). The option "Show squad letter before names" (off by default) prefixes
   them with the squad initial, e.g. `A · grmxque` for Able (`CMD` for the commander).
