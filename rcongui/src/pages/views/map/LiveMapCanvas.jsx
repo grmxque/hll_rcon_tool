@@ -16,6 +16,7 @@ import {
 } from "./coordinates";
 import { playerLabel } from "./playerLabel";
 import { garrisonDescription } from "./garrisons";
+import { SPAWN_POINT_KINDS, spawnPointDescription } from "./spawnPoints";
 
 export const TEAM_COLORS = {
   allies: "#3b82f6",
@@ -178,6 +179,53 @@ const GarrisonMarker = memo(function GarrisonMarker({ garrison, position, scale 
   );
 });
 
+const SpawnPointMarker = memo(function SpawnPointMarker({ point, position, scale }) {
+  const radius = 8 / scale;
+  const kind = SPAWN_POINT_KINDS[point.kind];
+  const { title, lines } = spawnPointDescription(point, Date.now());
+  return (
+    <g
+      transform={`translate(${position.x} ${position.y})`}
+      opacity={kind.possible ? CANDIDATE_OPACITY : 1}
+      style={{ cursor: "default" }}
+    >
+      <Tooltip
+        title={
+          <Box>
+            <Typography variant="subtitle2">{title}</Typography>
+            {lines.map((line) => (
+              <Typography key={line} variant="body2">
+                {line}
+              </Typography>
+            ))}
+          </Box>
+        }
+        disableInteractive
+      >
+        <g>
+          <circle
+            r={radius}
+            fill={TEAM_COLORS[point.team] ?? TEAM_COLORS.unassigned}
+            stroke="#fff"
+            strokeWidth={1.5 / scale}
+            strokeDasharray={kind.possible ? `${3 / scale} ${2 / scale}` : undefined}
+          />
+          <text
+            textAnchor="middle"
+            dominantBaseline="central"
+            fontSize={10 / scale}
+            fontWeight="bold"
+            fill="#fff"
+            pointerEvents="none"
+          >
+            {kind.letter}
+          </text>
+        </g>
+      </Tooltip>
+    </g>
+  );
+});
+
 const inSquad = (player, squad) =>
   Boolean(squad) && player.team === squad.team && player.unit_name === squad.unit_name;
 
@@ -260,6 +308,7 @@ const LiveMapCanvas = forwardRef(function LiveMapCanvas(
     layer,
     players,
     garrisons = [],
+    spawnPoints = [],
     selectedId,
     highlightSquad,
     showNames,
@@ -434,6 +483,15 @@ const LiveMapCanvas = forwardRef(function LiveMapCanvas(
             <Sectors sectors={layer.sectors} extent={layer.image_extent} scale={view.scale} />
           )}
           {grid && <Grid geometry={grid} scale={view.scale} />}
+          {layer &&
+            spawnPoints.map((point) => (
+              <SpawnPointMarker
+                key={`${point.team}:${point.kind}:${point.first_seen}:${point.x}`}
+                point={point}
+                position={worldToMap(layer.image_extent, point.x, point.y)}
+                scale={view.scale}
+              />
+            ))}
           {layer &&
             garrisons.map((garrison) => (
               <GarrisonMarker

@@ -161,7 +161,7 @@ def test_live_garrisons_candidate_then_confirmed(red, config):
     rcon = Mock()
     tracker.observe_poll(rcon, MATCH, players(off=0), now=10_003)
     tracker.observe_poll(rcon, MATCH, players(off=50), now=10_006)
-    [candidate] = tracker.live_garrisons(MATCH["start"])
+    [candidate] = tracker.live_tracking(MATCH["start"])["garrisons"]
     assert candidate["x"] == pytest.approx(1000.0, abs=1)
     assert candidate == candidate | {
         "y": 1000.0,
@@ -174,7 +174,7 @@ def test_live_garrisons_candidate_then_confirmed(red, config):
     }
     tracker.observe_poll(rcon, MATCH, players("dead", off=50), now=10_009)
     tracker.observe_poll(rcon, MATCH, players((1000.0, 1000.0), off=53), now=10_012)
-    [confirmed] = tracker.live_garrisons(MATCH["start"])
+    [confirmed] = tracker.live_tracking(MATCH["start"])["garrisons"]
     assert confirmed["status"] == "confirmed"
     assert confirmed["built_at"] == 10_006
     assert confirmed["last_seen"] == 10_012
@@ -186,14 +186,17 @@ def test_commander_candidates_are_not_drawn_on_the_live_map(red, config):
     tracker.observe_poll(
         rcon, MATCH, players(cmd=50, off=50), now=10_006
     )  # drop + garrison
-    assert [g["builder_id"] for g in tracker.live_garrisons(MATCH["start"])] == ["off"]
+    assert [
+        g["builder_id"] for g in tracker.live_tracking(MATCH["start"])["garrisons"]
+    ] == ["off"]
     # His confirmed garrisons are drawn.
     tracker.observe_poll(rcon, MATCH, players("dead", cmd=50, off=50), now=10_009)
     tracker.observe_poll(
         rcon, MATCH, players((1000.0, 1000.0), cmd=53, off=50), now=10_012
     )
     live = {
-        g["builder_id"]: g["status"] for g in tracker.live_garrisons(MATCH["start"])
+        g["builder_id"]: g["status"]
+        for g in tracker.live_tracking(MATCH["start"])["garrisons"]
     }
     assert live == {"cmd": "confirmed", "off": "candidate"}
 
@@ -201,17 +204,17 @@ def test_commander_candidates_are_not_drawn_on_the_live_map(red, config):
 def test_confirmed_garrison_nobody_uses_disappears_from_the_live_map(red, config):
     rcon = Mock()
     build_and_confirm(rcon, 10_003)
-    assert tracker.live_garrisons(MATCH["start"])
+    assert tracker.live_tracking(MATCH["start"])["garrisons"]
     tracker.observe_poll(rcon, MATCH, players(off=53), now=10_012 + 21 * 60)
-    assert tracker.live_garrisons(MATCH["start"]) == []
+    assert tracker.live_tracking(MATCH["start"])["garrisons"] == []
 
 
 def test_no_live_garrisons_without_tracking(red, config):
     rcon = Mock()
     build_and_confirm(rcon, 10_003)
     config["value"] = settings(enabled=False)
-    assert tracker.live_garrisons(MATCH["start"]) == []
-    assert tracker.live_garrisons(None) == []
+    assert tracker.live_tracking(MATCH["start"])["garrisons"] == []
+    assert tracker.live_tracking(None) == {"garrisons": [], "spawn_points": []}
 
 
 def test_banner_after_a_new_construction(red, config, monkeypatch):
@@ -391,8 +394,8 @@ def test_dormant_candidates_stay_on_the_live_map_for_20_minutes(red, config):
     tracker.observe_poll(rcon, MATCH, players(off=0), now=10_003)
     tracker.observe_poll(rcon, MATCH, players(off=50), now=10_006)
     tracker.observe_poll(rcon, MATCH, players(off=50), now=10_006 + 600)  # dormant
-    assert [g["status"] for g in tracker.live_garrisons(MATCH["start"])] == [
-        "candidate"
-    ]
+    assert [
+        g["status"] for g in tracker.live_tracking(MATCH["start"])["garrisons"]
+    ] == ["candidate"]
     tracker.observe_poll(rcon, MATCH, players(off=50), now=10_006 + 1_300)
-    assert tracker.live_garrisons(MATCH["start"]) == []
+    assert tracker.live_tracking(MATCH["start"])["garrisons"] == []

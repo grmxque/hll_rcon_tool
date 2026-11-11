@@ -235,6 +235,10 @@ HQ_LIFETIME_SECONDS = 600.0
 # Share of the spawns crediting the same player for the point to be his (garrison, outpost), and
 # share of one squad for an owned point to be an outpost (squad only).
 OWNED_SHARE = 0.5
+# Outposts and airheads nobody spawned on for this long are no longer drawn on the live map (moved,
+# destroyed, expired). HQs stay.
+LIVE_STALE_SECONDS = 300.0
+LIVE_KINDS = (HQ, GARRISON, OUTPOST, AIRHEAD)
 OUTPOST_SQUAD_SHARE = 0.8
 
 
@@ -327,6 +331,53 @@ class SpawnPoints:
             if p["team"] == team and self._near(p, x, y)
         ]
         return min(found, key=lambda f: f[0])[1] if found else None
+
+    def live(
+        self,
+        names: dict[str, str],
+        now: float | None,
+        hidden: Iterable[dict] = (),
+    ) -> list[dict]:
+        """Points to draw on the live map.
+
+        Left out: unknown points (few spawns), confirmed garrisons and points near ``hidden``
+        positions (the garrison markers), outposts and airheads unused for ``LIVE_STALE_SECONDS``.
+        """
+        hidden = list(hidden)
+        result = []
+        for point in self.points:
+            if point["kind"] not in LIVE_KINDS or point.get("garrison"):
+                continue
+            if (
+                point["kind"] != HQ
+                and now is not None
+                and now - point["last_ts"] > LIVE_STALE_SECONDS
+            ):
+                continue
+            if any(
+                h["team"] == point["team"] and self._near(point, h["x"], h["y"])
+                for h in hidden
+            ):
+                continue
+            owner = (
+                max(point["credited"], key=point["credited"].get)
+                if point["kind"] in (GARRISON, OUTPOST) and point["credited"]
+                else None
+            )
+            result.append(
+                {
+                    "x": point["x"],
+                    "y": point["y"],
+                    "team": point["team"],
+                    "kind": point["kind"],
+                    "owner_id": owner,
+                    "owner_name": names.get(owner, owner) if owner else None,
+                    "first_seen": point["first_ts"],
+                    "last_seen": point["last_ts"],
+                    "spawns": point["spawns"],
+                }
+            )
+        return result
 
     def early(self, ts: float) -> bool:
         """Within the first minutes of the tracked match: the HQ points are not known yet."""

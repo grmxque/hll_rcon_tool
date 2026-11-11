@@ -7,8 +7,9 @@ Everything here is a pure transformation of data CRCON already fetches:
   live map adds no RCON traffic;
 * score and remaining time come from ``Rcon.get_gamestate`` (also cached ~2 s);
 * map geometry (grid, sectors) comes from ``hllrcon``'s static layer data.
-* garrisons come from the actions tracking state of the match in Redis
-  (``rcon.actions_tracking``), when it is enabled.
+* garrisons and spawn points (HQs, outposts, airheads) come from the actions
+  tracking state of the match in Redis (``rcon.actions_tracking``), when it is
+  enabled.
 
 Strongpoints are not shown: the game server has no command to read the active
 objectives of the match in progress.
@@ -25,7 +26,7 @@ from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict
 import hllrcon
 from hllrcon.data.maps import CardinalDirection
 
-from rcon.actions_tracking.tracker import live_garrisons
+from rcon.actions_tracking.tracker import live_tracking
 from rcon.game.registry import game_switch
 from rcon.types import GameEnum
 from rcon.utils import MapsHistory
@@ -115,11 +116,30 @@ class LiveMapGarrison(TypedDict):
     last_seen: float | None
 
 
+class LiveMapSpawnPoint(TypedDict):
+    """A spawn point seen from the spawns of the match (``rcon.actions_tracking.spawns``)."""
+
+    x: float
+    y: float
+    team: str | None
+    #: "garrison" here is only seen from the spawns (not counted for its builder): the counted
+    #: ones are in ``garrisons``. "airhead" is a possible one.
+    kind: Literal["hq", "garrison", "outpost", "airhead"]
+    #: Player credited for the spawns there (garrisons and outposts).
+    owner_id: str | None
+    owner_name: str | None
+    #: Epoch seconds.
+    first_seen: float
+    last_seen: float
+    spawns: int
+
+
 class LiveMap(TypedDict):
     layer: LiveMapLayer | None
     score: LiveMapScore | None
     players: list[LiveMapPlayer]
     garrisons: list[LiveMapGarrison]
+    spawn_points: list[LiveMapSpawnPoint]
     #: Start of the match in progress (epoch ms), used to keep only its log lines.
     match_start_ms: int | None
 
@@ -323,6 +343,7 @@ def build_live_map(
     axis_faction: str | None = None,
     match_start: int | None = None,
     garrisons: list[LiveMapGarrison] | None = None,
+    spawn_points: list[LiveMapSpawnPoint] | None = None,
 ) -> LiveMap:
     """Assemble the live map. ``match_start`` is the match start in epoch seconds."""
     score = build_score(gamestate, allied_faction, axis_faction)
@@ -335,6 +356,7 @@ def build_live_map(
         "score": score,
         "players": [build_player(p) for p in _team_view_players(team_view)],
         "garrisons": garrisons or [],
+        "spawn_points": spawn_points or [],
         "match_start_ms": match_start * 1000 if match_start else None,
     }
 
@@ -363,10 +385,10 @@ def live_map_for(rcon: "Rcon") -> LiveMap:
     match = current_match()
     match_start = match.get("start") if match else None
     try:
-        garrisons = live_garrisons(match_start)
+        tracking = live_tracking(match_start)
     except Exception:
-        logger.exception("Live map: could not read the detected garrisons")
-        garrisons = []
+        logger.exception("Live map: could not read the actions tracking")
+        tracking = {"garrisons": [], "spawn_points": []}
     return build_live_map(
         rcon.get_team_view(),
         layer.id,
@@ -375,5 +397,6 @@ def live_map_for(rcon: "Rcon") -> LiveMap:
         allied_faction=layer.map.allies.name,
         axis_faction=layer.map.axis.name,
         match_start=match_start,
-        garrisons=garrisons,
+        garrisons=tracking["garrisons"],
+        spawn_points=tracking["spawn_points"],
     )

@@ -138,6 +138,7 @@ def test_live_map_with_empty_server():
         "score": None,
         "players": [],
         "garrisons": [],
+        "spawn_points": [],
         "match_start_ms": None,
     }
 
@@ -249,17 +250,23 @@ def test_live_map_for_survives_a_gamestate_failure(monkeypatch):
     assert result["layer"]["map_id"] == "carentan"
 
 
-def test_live_map_includes_the_detected_garrisons(monkeypatch):
+def test_live_map_includes_the_detected_garrisons_and_spawn_points(monkeypatch):
     monkeypatch.setattr(live_map, "MapsHistory", lambda: [_match()])
     garrison = {"x": 1.0, "y": 2.0, "team": "allies", "status": "candidate"}
+    hq = {"x": 3.0, "y": 4.0, "team": "axis", "kind": "hq"}
     calls = []
     monkeypatch.setattr(
-        live_map, "live_garrisons", lambda start: calls.append(start) or [garrison]
+        live_map,
+        "live_tracking",
+        lambda start: (
+            calls.append(start) or {"garrisons": [garrison], "spawn_points": [hq]}
+        ),
     )
 
     result = live_map.live_map_for(_rcon())
 
     assert result["garrisons"] == [garrison]
+    assert result["spawn_points"] == [hq]
     assert calls == [1_700_000_000]
 
 
@@ -269,9 +276,10 @@ def test_live_map_without_garrisons_when_the_tracking_fails(monkeypatch):
     def broken(start):
         raise ConnectionError("redis down")
 
-    monkeypatch.setattr(live_map, "live_garrisons", broken)
+    monkeypatch.setattr(live_map, "live_tracking", broken)
 
     result = live_map.live_map_for(_rcon())
 
     assert result["garrisons"] == []
+    assert result["spawn_points"] == []
     assert result["players"] == []

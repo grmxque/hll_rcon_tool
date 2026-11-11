@@ -195,8 +195,8 @@ passive production stream (the nodes keep producing after a class change).
 ## Consumers
 
 - [End of Game Rewards](end-of-game-rewards.md): TOP 3 garrison builders, node builders, thanks banner.
-- [Live map](live-map.md): garrison candidates and confirmed garrisons still in use
-  (`tracker.live_garrisons()`, `GarrisonDetector.live()`).
+- [Live map](live-map.md): garrison candidates, confirmed garrisons still in use and the classified spawn
+  points (`tracker.live_tracking()`, `GarrisonDetector.live()`, `SpawnPoints.live()`).
 
 ## Diagnostics
 

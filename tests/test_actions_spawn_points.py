@@ -200,3 +200,29 @@ def test_replay_prints_the_spawn_points(match, tmp_path, capsys):
     assert len(lines) == 1
     assert "allies hq" in lines[0] and "spawns=4" in lines[0]
     assert "used since the start of the match" in lines[0]
+
+
+def test_live_points(match):
+    wave(match, HQ_POS, squad=("a0", "a1"), team=("b0", "b1"))  # HQ
+    outpost = (950.0, 950.0)
+    match.idle(200)
+    wave(match, outpost, squad=("a2", "a3"), credited="off")
+    wave(match, outpost, squad=("a4", "a5"), credited="off")
+    wave(match, (1500.0, 1500.0), squad=("a6",))  # one spawn: unknown, not drawn
+    settle(match)
+    engine = match.engine
+    live = {p["kind"]: p for p in engine.points.live(engine.names, engine.last_ts)}
+    assert set(live) == {"hq", "outpost"}
+    assert (
+        live["outpost"] | {"owner_id": "off", "owner_name": "Off", "spawns": 4}
+        == live["outpost"]
+    )
+    assert live["hq"]["owner_id"] is None
+    # Next to a garrison marker: drawn as the garrison only.
+    hidden = [{"team": "allies", "x": 95_000.0, "y": 95_000.0}]
+    assert [
+        p["kind"] for p in engine.points.live(engine.names, engine.last_ts, hidden)
+    ] == ["hq"]
+    # An outpost nobody spawned on for 5 min is no longer drawn; the HQ stays.
+    later = engine.last_ts + 6 * 60
+    assert [p["kind"] for p in engine.points.live(engine.names, later)] == ["hq"]
