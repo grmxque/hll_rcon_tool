@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { spawnPointCounts, spawnPointDescription, visibleSpawnPoints } from "./spawnPoints.js";
+import { SPAWN_POINT_KINDS, spawnPointCounts, spawnPointDescription, visibleSpawnPoints } from "./spawnPoints.js";
 
 const point = (kind, team = "allies", extra = {}) => ({
   x: 0,
@@ -44,4 +44,11 @@ test("counts", () => {
     garrison: 0,
   });
   assert.deepEqual(spawnPointCounts(undefined), { hq: 0, outpost: 0, airhead: 0, garrison: 0 });
+});
+
+test("game icons, a letter for the HQ", () => {
+  assert.equal(SPAWN_POINT_KINDS.hq.icon, null);
+  for (const kind of ["outpost", "airhead", "garrison"]) {
+    assert.match(SPAWN_POINT_KINDS[kind].icon, /^\/icons\/map\/[a-z]+\.png$/);
+  }
 });

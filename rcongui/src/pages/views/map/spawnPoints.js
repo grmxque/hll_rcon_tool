@@ -1,13 +1,14 @@
 // Spawn points seen from the spawns of the match (rcon/actions_tracking/spawns.py), as sent by
 // /api/get_live_map: HQs, outposts, possible airheads, and garrisons only seen from the spawns (the
 // garrisons counted for their builder are in `garrisons`).
-import { formatAge } from "./garrisons.js";
+import { GARRISON_ICON, formatAge } from "./garrisons.js";
 
+// Game icons (assets/hll/images/icons/map, see docs/live-map.md); the HQ has none: a letter is drawn.
 export const SPAWN_POINT_KINDS = {
-  hq: { letter: "H", title: "HQ", possible: false },
-  outpost: { letter: "O", title: "Outpost", possible: false },
-  airhead: { letter: "A", title: "Possible airhead", possible: true },
-  garrison: { letter: "G", title: "Garrison (seen from the spawns)", possible: false },
+  hq: { letter: "H", icon: null, title: "HQ", possible: false },
+  outpost: { letter: "O", icon: "/icons/map/outpost.png", title: "Outpost", possible: false },
+  airhead: { letter: "A", icon: "/icons/map/airhead.png", title: "Possible airhead", possible: true },
+  garrison: { letter: "G", icon: GARRISON_ICON, title: "Garrison (seen from the spawns)", possible: false },
 };
 
 /** Spawn points to draw: the option is on and their team is shown. */

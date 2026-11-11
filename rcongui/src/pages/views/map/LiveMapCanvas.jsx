@@ -15,7 +15,7 @@ import {
   zoomAt,
 } from "./coordinates";
 import { playerLabel } from "./playerLabel";
-import { garrisonDescription } from "./garrisons";
+import { GARRISON_ICON, garrisonDescription } from "./garrisons";
 import { SPAWN_POINT_KINDS, spawnPointDescription } from "./spawnPoints";
 
 export const TEAM_COLORS = {
@@ -128,65 +128,17 @@ const PlayerMarker = memo(function PlayerMarker({
 // Candidates (detected from the score, not confirmed yet) are see-through like the dead.
 const CANDIDATE_OPACITY = 0.45;
 
-const GarrisonMarker = memo(function GarrisonMarker({ garrison, position, scale }) {
-  const size = 9 / scale;
-  const candidate = garrison.status === "candidate";
-  const { title, lines } = garrisonDescription(garrison, Date.now());
-  return (
-    <g
-      transform={`translate(${position.x} ${position.y})`}
-      opacity={candidate ? CANDIDATE_OPACITY : 1}
-      style={{ cursor: "default" }}
-    >
-      <Tooltip
-        title={
-          <Box>
-            <Typography variant="subtitle2">{title}</Typography>
-            {lines.map((line) => (
-              <Typography key={line} variant="body2">
-                {line}
-              </Typography>
-            ))}
-          </Box>
-        }
-        disableInteractive
-      >
-        <g>
-          <rect
-            x={-size}
-            y={-size}
-            width={size * 2}
-            height={size * 2}
-            transform="rotate(45)"
-            fill={TEAM_COLORS[garrison.team] ?? TEAM_COLORS.unassigned}
-            stroke="#fff"
-            strokeWidth={1.5 / scale}
-            strokeDasharray={candidate ? `${3 / scale} ${2 / scale}` : undefined}
-          />
-          <text
-            textAnchor="middle"
-            dominantBaseline="central"
-            fontSize={11 / scale}
-            fontWeight="bold"
-            fill="#fff"
-            pointerEvents="none"
-          >
-            G
-          </text>
-        </g>
-      </Tooltip>
-    </g>
-  );
-});
+// Icons of the game (see docs/live-map.md for their source), drawn white on a disc of the team colour.
+const WHITE_ICON_FILTER = "live-map-white-icon";
 
-const SpawnPointMarker = memo(function SpawnPointMarker({ point, position, scale }) {
-  const radius = 8 / scale;
-  const kind = SPAWN_POINT_KINDS[point.kind];
-  const { title, lines } = spawnPointDescription(point, Date.now());
+/** A marker of fixed screen size: team-coloured disc with a game icon, or a letter when there is none. */
+const MapIconMarker = memo(function MapIconMarker({ team, icon, letter, possible, title, lines, position, scale }) {
+  const radius = 10 / scale;
+  const iconSize = radius * 1.5;
   return (
     <g
       transform={`translate(${position.x} ${position.y})`}
-      opacity={kind.possible ? CANDIDATE_OPACITY : 1}
+      opacity={possible ? CANDIDATE_OPACITY : 1}
       style={{ cursor: "default" }}
     >
       <Tooltip
@@ -205,24 +157,69 @@ const SpawnPointMarker = memo(function SpawnPointMarker({ point, position, scale
         <g>
           <circle
             r={radius}
-            fill={TEAM_COLORS[point.team] ?? TEAM_COLORS.unassigned}
+            fill={TEAM_COLORS[team] ?? TEAM_COLORS.unassigned}
             stroke="#fff"
             strokeWidth={1.5 / scale}
-            strokeDasharray={kind.possible ? `${3 / scale} ${2 / scale}` : undefined}
+            strokeDasharray={possible ? `${3 / scale} ${2 / scale}` : undefined}
           />
-          <text
-            textAnchor="middle"
-            dominantBaseline="central"
-            fontSize={10 / scale}
-            fontWeight="bold"
-            fill="#fff"
-            pointerEvents="none"
-          >
-            {kind.letter}
-          </text>
+          {icon ? (
+            <image
+              href={icon}
+              x={-iconSize / 2}
+              y={-iconSize / 2}
+              width={iconSize}
+              height={iconSize}
+              filter={`url(#${WHITE_ICON_FILTER})`}
+              pointerEvents="none"
+            />
+          ) : (
+            <text
+              textAnchor="middle"
+              dominantBaseline="central"
+              fontSize={11 / scale}
+              fontWeight="bold"
+              fill="#fff"
+              pointerEvents="none"
+            >
+              {letter}
+            </text>
+          )}
         </g>
       </Tooltip>
     </g>
+  );
+});
+
+const GarrisonMarker = memo(function GarrisonMarker({ garrison, position, scale }) {
+  const { title, lines } = garrisonDescription(garrison, Date.now());
+  return (
+    <MapIconMarker
+      team={garrison.team}
+      icon={GARRISON_ICON}
+      letter="G"
+      possible={garrison.status === "candidate"}
+      title={title}
+      lines={lines}
+      position={position}
+      scale={scale}
+    />
+  );
+});
+
+const SpawnPointMarker = memo(function SpawnPointMarker({ point, position, scale }) {
+  const kind = SPAWN_POINT_KINDS[point.kind];
+  const { title, lines } = spawnPointDescription(point, Date.now());
+  return (
+    <MapIconMarker
+      team={point.team}
+      icon={kind.icon}
+      letter={kind.letter}
+      possible={kind.possible}
+      title={title}
+      lines={lines}
+      position={position}
+      scale={scale}
+    />
   );
 });
 
@@ -470,6 +467,11 @@ const LiveMapCanvas = forwardRef(function LiveMapCanvas(
       }}
     >
       <svg width="100%" height="100%" style={{ display: "block" }}>
+        <defs>
+          <filter id={WHITE_ICON_FILTER}>
+            <feColorMatrix type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 1 0" />
+          </filter>
+        </defs>
         <g transform={`translate(${view.x} ${view.y}) scale(${view.scale})`}>
           {layer && (
             <image

@@ -2,6 +2,9 @@
 // "candidate": detected from the builder's score, not confirmed yet (abilities and supplies consumed
 // give the same points); "confirmed": teammates spawned on it.
 
+/** Game icon of a garrison (assets/hll/images/icons/map, see docs/live-map.md). */
+export const GARRISON_ICON = "/icons/map/garrison.png";
+
 /** Garrisons to draw: the option is on and their team is shown. Candidates first, so confirmed
  * garrisons are drawn above them. */
 export function visibleGarrisons(garrisons, { show, visibleTeams }) {
