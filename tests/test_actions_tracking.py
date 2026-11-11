@@ -43,6 +43,9 @@ def config(monkeypatch):
     return current
 
 
+ROLES = {"off": "officer", "cmd": "armycommander"}
+
+
 def players(mate=None, **support):
     """Officers / engineers 300 m apart, plus a rifleman of another squad: far away (None), dead
     ("dead") or just spawned at a position."""
@@ -51,7 +54,7 @@ def players(mate=None, **support):
             "name": player_id.title(),
             "team": "allies",
             "unit_id": 0,
-            "role": "officer" if player_id.startswith("off") else "engineer",
+            "role": ROLES.get(player_id[:3], "engineer"),
             "support": points,
             "deaths": 0,
             "world_position": {"x": 1000.0 + 30_000 * index, "y": 1000.0, "z": 10.0},
@@ -168,6 +171,24 @@ def test_live_garrisons_candidate_then_confirmed(red, config):
     assert confirmed["status"] == "confirmed"
     assert confirmed["built_at"] == 10_006
     assert confirmed["last_seen"] == 10_012
+
+
+def test_commander_candidates_are_not_drawn_on_the_live_map(red, config):
+    rcon = Mock()
+    tracker.observe_poll(rcon, MATCH, players(cmd=0, off=0), now=10_003)
+    tracker.observe_poll(
+        rcon, MATCH, players(cmd=50, off=50), now=10_006
+    )  # drop + garrison
+    assert [g["builder_id"] for g in tracker.live_garrisons(MATCH["start"])] == ["off"]
+    # His confirmed garrisons are drawn.
+    tracker.observe_poll(rcon, MATCH, players("dead", cmd=50, off=50), now=10_009)
+    tracker.observe_poll(
+        rcon, MATCH, players((1000.0, 1000.0), cmd=53, off=50), now=10_012
+    )
+    live = {
+        g["builder_id"]: g["status"] for g in tracker.live_garrisons(MATCH["start"])
+    }
+    assert live == {"cmd": "confirmed", "off": "candidate"}
 
 
 def test_confirmed_garrison_nobody_uses_disappears_from_the_live_map(red, config):
@@ -296,3 +317,45 @@ def test_the_log_loop_feeds_its_player_poll_to_the_detector(monkeypatch):
         loop.update_maps_history(prev_map_time_elapsed=1)
     dp = loop.get_detailed_players.return_value
     observe.assert_called_once_with(loop.rcon, current_map, dp)
+
+
+def test_replay_trace_shows_one_players_polls(tmp_path, capsys):
+    def poll(ts, x, deaths):
+        alive = x is not None
+        return json.dumps(
+            {
+                "ts": ts,
+                "players": [
+                    {
+                        "player_id": "76561198000000001",
+                        "name": "grmxque",
+                        "team": "axis",
+                        "unit_id": -1,
+                        "role": "armycommander",
+                        "support": 0,
+                        "deaths": deaths,
+                        "x": x or 0.0,
+                        "y": 1000.0 if alive else 0.0,
+                        "z": 50.0 if alive else 0.0,
+                    }
+                ],
+            }
+        )
+
+    path = tmp_path / "match.jsonl"
+    path.write_text(
+        "\n".join(
+            [
+                poll(100, -90_000.0, 0),
+                poll(103, None, 1),  # redeploy: deployment screen
+                poll(106, 95_000.0, 1),  # a position reported on the deployment screen
+                poll(109, -89_000.0, 1),
+            ]
+        )
+    )
+    assert cli.main(["replay", str(path), "--trace", "grmx"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 4
+    assert lines[1].endswith("death +1") and "(0, 0, 0) dead/deploying" in lines[1]
+    assert "SPAWN detected" in lines[2] and "(    95000," in lines[2]
+    assert "jump 1840 m" in lines[3]

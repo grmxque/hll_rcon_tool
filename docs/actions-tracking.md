@@ -153,7 +153,11 @@ passive production stream (the nodes keep producing after a class change).
 
   ```bash
   python -m rcon.actions_tracking replay /logs/actions_snapshots/1_1762800000.jsonl [--player ID] [--all]
+  python -m rcon.actions_tracking replay /logs/actions_snapshots/1_1762800000.jsonl --trace grmxque
   ```
+
+  `--trace` prints every poll of one player (ID or part of the name): position, deaths, role, support, jumps
+  of more than 100 m and the spawns the tracking detected.
 
   Outside the container: `DEBUG=1 SERVER_NUMBER=1 HLL_GAME=hll HLL_MAINTENANCE_CONTAINER=1 uv run python -m ...`.
 
@@ -198,6 +202,9 @@ passive production stream (the nodes keep producing after a class change).
   unconfirmed. A repair station built in the last 150 s of a match counts as a node.
 - Constructions before the first poll of the tracking (CRCON started mid-match) are invisible, except nodes
   found through their passive production.
+- A player on the deployment screen is recognised by the position (0, 0, 0). After a redeploy from the menu,
+  the server was seen reporting another position (the enemy HQ) instead: that position is then taken for a
+  spawn, and the real spawn that follows is missed. Under investigation (`--trace`).
 - HLL (WW2) only.
 
 ## Tests

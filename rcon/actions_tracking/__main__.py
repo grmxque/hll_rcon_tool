@@ -1,6 +1,7 @@
 """Replay recorded polls through the actions engine.
 
     python -m rcon.actions_tracking replay <file.jsonl> [--player PLAYER_ID] [--all]
+    python -m rcon.actions_tracking replay <file.jsonl> --trace <PLAYER_ID or name>
 
 The files are written by the ``record_actions_snapshots`` setting
 ($LOGGING_PATH/actions_snapshots). Prints each decision with its reason, then the actions per player
@@ -9,6 +10,7 @@ and the TOP 3 garrison builders.
 
 import argparse
 import json
+import math
 import sys
 
 from rcon.actions_tracking.engine import ActionsEngine
@@ -16,16 +18,58 @@ from rcon.actions_tracking.model import Decision, PollSnapshot, rank_players
 
 
 def replay(
-    path: str, roles: dict[str, list[str]]
+    path: str, roles: dict[str, list[str]], on_poll=None
 ) -> tuple[ActionsEngine, list[Decision]]:
+    """Feed every poll of the file to a new engine; ``on_poll(snapshot, engine)`` after each."""
     engine = ActionsEngine(roles=roles)
     decisions = []
     with open(path, encoding="utf-8") as file:
         for line in file:
             if line.strip():
-                decisions += engine.observe(PollSnapshot.from_dict(json.loads(line)))
+                snapshot = PollSnapshot.from_dict(json.loads(line))
+                decisions += engine.observe(snapshot)
+                if on_poll:
+                    on_poll(snapshot, engine)
     decisions += engine.finalize()
     return engine, decisions
+
+
+def tracer(wanted: str):
+    """Print, at each poll, what the server reported for one player (ID or part of the name):
+    position, deaths, role, support, and the jumps and spawns the tracking saw."""
+    state = {"start": None, "previous": None}
+
+    def on_poll(snapshot: PollSnapshot, engine: ActionsEngine) -> None:
+        state["start"] = state["start"] or snapshot.ts
+        for sample in snapshot.players:
+            if wanted != sample.player_id and wanted.lower() not in sample.name.lower():
+                continue
+            notes = []
+            previous = state["previous"]
+            if previous is not None and sample.alive and previous.alive:
+                moved = math.hypot(sample.x - previous.x, sample.y - previous.y) / 100
+                if moved > 100:
+                    notes.append(f"jump {moved:.0f} m")
+            if previous is not None and sample.deaths > previous.deaths:
+                notes.append("death +1")
+            if any(
+                s["player_id"] == sample.player_id
+                for s in engine.spawns.at(snapshot.ts)
+            ):
+                notes.append("SPAWN detected")
+            position = (
+                f"({sample.x:9.0f}, {sample.y:9.0f}, {sample.z:7.0f})"
+                if sample.alive
+                else "(0, 0, 0) dead/deploying"
+            )
+            print(
+                f"+{snapshot.ts - state['start']:7.1f}s {sample.name} {position} "
+                f"deaths={sample.deaths} role={sample.role} support={sample.support} "
+                + " ".join(notes)
+            )
+            state["previous"] = sample
+
+    return on_poll
 
 
 def main(argv=None) -> int:
@@ -45,6 +89,10 @@ def main(argv=None) -> int:
     replay_parser.add_argument(
         "--node-roles", default="engineer", help="comma separated"
     )
+    replay_parser.add_argument(
+        "--trace",
+        help="print every poll of this player (ID or part of the name): position, deaths…",
+    )
     args = parser.parse_args(argv)
 
     engine, decisions = replay(
@@ -53,7 +101,10 @@ def main(argv=None) -> int:
             "garrison": args.garrison_roles.split(","),
             "node": args.node_roles.split(","),
         },
+        on_poll=tracer(args.trace) if args.trace else None,
     )
+    if args.trace:
+        return 0
     for decision in decisions:
         if args.player and decision.player_id != args.player:
             continue
